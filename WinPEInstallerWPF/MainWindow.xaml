@@ -104,6 +104,31 @@
                             </Style>
                         </ComboBox.ItemContainerStyle>
                     </ComboBox>
+                    <!-- Блок 3. Твики и оптимизация -->
+                    <TextBlock Text="3. Твики и компоненты (отметьте для отключения)" 
+           Foreground="{DynamicResource TextPrimaryBrush}" 
+           FontSize="14" FontWeight="SemiBold" Margin="0,16,0,10"/>
+
+                    <Border Background="{DynamicResource CardBrush}" CornerRadius="8" Padding="12" 
+        BorderBrush="{DynamicResource ControlBorderBrush}" BorderThickness="1">
+                        <StackPanel>
+                            <CheckBox x:Name="ChkDisableDefender" IsChecked="True" Margin="0,4" VerticalContentAlignment="Center">
+                                <TextBlock Text="Отключить Защитник (Windows Defender)" Foreground="{DynamicResource TextPrimaryBrush}" FontSize="12"/>
+                            </CheckBox>
+
+                            <CheckBox x:Name="ChkRemoveCopilot" IsChecked="True" Margin="0,4" VerticalContentAlignment="Center">
+                                <TextBlock Text="Полностью убрать Copilot (ИИ-панель)" Foreground="{DynamicResource TextPrimaryBrush}" FontSize="12"/>
+                            </CheckBox>
+
+                            <CheckBox x:Name="ChkDisableTelemetry" IsChecked="True" Margin="0,4" VerticalContentAlignment="Center">
+                                <TextBlock Text="Отключить телеметрию и сбор данных" Foreground="{DynamicResource TextPrimaryBrush}" FontSize="12"/>
+                            </CheckBox>
+
+                            <CheckBox x:Name="ChkDisableEdgeStartup" IsChecked="True" Margin="0,4" VerticalContentAlignment="Center">
+                                <TextBlock Text="Отключить автозапуск и фоновую работу Edge" Foreground="{DynamicResource TextPrimaryBrush}" FontSize="12"/>
+                            </CheckBox>
+                        </StackPanel>
+                    </Border>
 
                     <Border Background="{DynamicResource CardBrush}" CornerRadius="8" Margin="0,20,0,0" Padding="15" BorderBrush="{DynamicResource ControlBorderBrush}" BorderThickness="1">
                         <TextBlock x:Name="TxtInfo" Text="Информация о диске:&#x0a;Все разделы на накопителе (Disk 0) будут перезаписаны." 

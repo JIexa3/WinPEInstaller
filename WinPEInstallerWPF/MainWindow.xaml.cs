@@ -65,17 +65,56 @@ namespace WinPEInstallerWPF
 
         private void FindUsbDrive()
         {
+            // 1. Проверяем накопитель, с которого запущена сама программа
+            string appDir = AppDomain.CurrentDomain.BaseDirectory;
+            string appDrive = Path.GetPathRoot(appDir);
+
+            if (!string.IsNullOrEmpty(appDrive) &&
+                Directory.Exists(Path.Combine(appDrive, "Images")) &&
+                Directory.Exists(Path.Combine(appDrive, "Soft")))
+            {
+                usbDrivePath = appDrive;
+                LblStatus.Text = $"Носитель определен: {usbDrivePath}";
+                return;
+            }
+
+            // 2. Если запущено из RAM-диска (X:\) в WinPE — ищем флешку среди всех дисков
             foreach (var drive in DriveInfo.GetDrives())
             {
-                if (drive.IsReady && Directory.Exists(Path.Combine(drive.Name, "Images")))
+                try
                 {
-                    usbDrivePath = drive.Name;
-                    LblStatus.Text = $"Флешка подключена: {usbDrivePath}";
-                    return;
+                    // Проверяем только готовые к чтению диски и пропускаем временный диск X:\
+                    if (drive.IsReady && !drive.Name.StartsWith("X", StringComparison.OrdinalIgnoreCase))
+                    {
+                        string imagesFolder = Path.Combine(drive.Name, "Images");
+                        string softFolder = Path.Combine(drive.Name, "Soft");
+
+                        // Ищем накопитель, содержащий обе наши рабочие папки
+                        if (Directory.Exists(imagesFolder) && Directory.Exists(softFolder))
+                        {
+                            usbDrivePath = drive.Name;
+                            LblStatus.Text = $"Флешка обнаружена: {usbDrivePath}";
+                            return;
+                        }
+                    }
+                }
+                catch
+                {
+                    // Игнорируем дисководы или заблокированные картридеры
                 }
             }
-            LblStatus.Text = "Ошибка: Каталог 'Images' не обнаружен.";
+
+            // 3. Если папки не найдены ни на одном диске
+            usbDrivePath = "";
+            LblStatus.Text = "Ошибка: Флешка с папками 'Images' и 'Soft' не найдена!";
+            MessageBox.Show(
+                "Не удалось автоматически найти установочную флешку.\n" +
+                "Убедитесь, что в корне накопителя созданы папки 'Images' и 'Soft'.",
+                "Носитель не найден",
+                MessageBoxButton.OK,
+                MessageBoxImage.Warning);
         }
+
         private void LoadWindowsImages()
         {
             string imagesPath = Path.Combine(usbDrivePath, "Images");
@@ -274,19 +313,7 @@ namespace WinPEInstallerWPF
 
 
 
-        //private void LoadWindowsImages()
-        //{
-        //    string imagesPath = Path.Combine(usbDrivePath, "Images");
-        //    if (Directory.Exists(imagesPath))
-        //    {
-        //        var files = Directory.GetFiles(imagesPath, "*.wim");
-        //        foreach (var file in files)
-        //        {
-        //            ComboImages.Items.Add(Path.GetFileName(file));
-        //        }
-        //        if (ComboImages.Items.Count > 0) ComboImages.SelectedIndex = 0;
-        //    }
-        //}
+      
 
         private void LoadAdditionalSoftware()
         {
@@ -314,11 +341,10 @@ namespace WinPEInstallerWPF
         {
             if (ComboImages.SelectedItem == null)
             {
-                MessageBox.Show("Выберите редакцию Windows!");
+                MessageBox.Show("Укажите требуемый образ Windows!");
                 return;
             }
 
-            // Получаем выбранную редакцию с ее точным индексом
             var selectedEdition = (WindowsEditionItem)ComboImages.SelectedItem;
 
             var selectedApps = new List<string>();
@@ -330,30 +356,60 @@ namespace WinPEInstallerWPF
                 }
             }
 
+            // Считываем состояние чекбоксов твиков
+            bool disableDefender = ChkDisableDefender.IsChecked == true;
+            bool removeCopilot = ChkRemoveCopilot.IsChecked == true;
+            bool disableTelemetry = ChkDisableTelemetry.IsChecked == true;
+            bool disableEdge = ChkDisableEdgeStartup.IsChecked == true;
+
             BtnStart.IsEnabled = false;
             ProgressInstall.IsIndeterminate = true;
 
-            // Передаем путь и индекс (1 для Домашней, 4 для Pro и т.д.)
-            await Task.Run(() => ExecuteDeployment(selectedEdition.FilePath, selectedEdition.Index, selectedApps));
+            await Task.Run(() => ExecuteDeployment(
+                selectedEdition.FilePath,
+                selectedEdition.Index,
+                selectedApps,
+                disableDefender,
+                removeCopilot,
+                disableTelemetry,
+                disableEdge
+            ));
         }
 
 
 
-        private void ExecuteDeployment(string imagePath, int imageIndex, List<string> apps)
+
+
+
+        private void ExecuteDeployment(
+        string imagePath,
+        int imageIndex,
+        List<string> apps,
+        bool disableDefender,
+        bool removeCopilot,
+        bool disableTelemetry,
+        bool disableEdge)
         {
+            // 1. Форматирование диска 0
             UpdateStatus("Конфигурация целевого накопителя (Diskpart)...");
             string diskpartScript = Path.Combine(Path.GetTempPath(), "dp.txt");
             File.WriteAllText(diskpartScript, "select disk 0\nclean\nconvert gpt\ncreate partition efi size=100\nformat quick fs=fat32 label=\"System\"\nassign letter=S\ncreate partition primary\nformat quick fs=ntfs label=\"Windows\"\nassign letter=W\nexit");
             RunCommand("diskpart.exe", $"/s \"{diskpartScript}\"");
 
+            // 2. Развертывание ОС через DISM
             UpdateStatus($"Развертывание редакции (Индекс {imageIndex})... Это займет 5-8 минут.");
             RunCommand("dism.exe", $"/Apply-Image /ImageFile:\"{imagePath}\" /Index:{imageIndex} /ApplyDir:W:\\");
 
+            // 3. Создание системного загрузчика UEFI
             UpdateStatus("Создание системного загрузчика BCD...");
             RunCommand("W:\\Windows\\System32\\bcdboot.exe", "W:\\Windows /s S: /f UEFI");
 
-            // 4. Формирование боевого сценария установки софта
-            UpdateStatus("Запись сценария SetupComplete.cmd...");
+            // 4. Применение твиков реестра в неактивную систему
+            UpdateStatus("Применение твиков реестра и оптимизаций...");
+            ApplyOfflineRegistryTweaks(disableDefender, removeCopilot, disableTelemetry, disableEdge);
+
+            // 5. Запись SetupComplete.cmd на системный диск W:\
+            UpdateStatus("Запись конфигурации SetupComplete.cmd...");
             string cmdPath = @"W:\Windows\Setup\Scripts\SetupComplete.cmd";
             Directory.CreateDirectory(Path.GetDirectoryName(cmdPath));
 
@@ -362,162 +418,103 @@ namespace WinPEInstallerWPF
                 sw.WriteLine("@echo off");
                 sw.WriteLine("chcp 65001 > nul");
 
-                string logFile = @"C:\Windows\Temp\install.log";
-                sw.WriteLine($"echo [%date% %time%] === СТАРТ УСТАНОВКИ ПО === > \"{logFile}\"");
+                // БАТНИК САМ ИЩЕТ БУКВУ ФЛЕШКИ ПРИ ПЕРВОМ ВХОДЕ В WINDOWS
+                sw.WriteLine(":: Автопоиск буквы флешки по наличию папки Soft");
+                sw.WriteLine("set USB_DRIVE=");
+                sw.WriteLine("for %%D in (C D E F G H I J K L M N O P Q R S T U V W X Y Z) do (");
+                sw.WriteLine("    if exist \"%%D:\\Soft\" set USB_DRIVE=%%D:");
+                sw.WriteLine(")");
+                sw.WriteLine("if not defined USB_DRIVE (");
+                sw.WriteLine("    echo [ОШИБКА] Флешка с софтом не найдена! >> C:\\Windows\\Temp\\install.log");
+                sw.WriteLine("    exit /b 1");
+                sw.WriteLine(")");
+
+                if (removeCopilot)
+                {
+                    sw.WriteLine("powershell -Command \"Get-AppxPackage -AllUsers *Copilot* | Remove-AppxPackage -AllUsers\" > nul 2>&1");
+                    sw.WriteLine("powershell -Command \"Get-AppxProvisionedPackage -Online | Where-Object DisplayName -like '*Copilot*' | Remove-AppxProvisionedPackage -Online\" > nul 2>&1");
+                }
 
                 foreach (var appName in apps)
                 {
-                    string source = Path.Combine(usbDrivePath, "Soft", appName);
                     string dest = $@"C:\Windows\Temp\{appName}";
 
-                    sw.WriteLine($"echo. >> \"{logFile}\"");
-                    sw.WriteLine($"echo [%date% %time%] Копирование {appName}... >> \"{logFile}\"");
-                    sw.WriteLine($"copy /y \"{source}\" \"{dest}\" >> \"{logFile}\" 2>&1");
+                    // Копируем софт, используя найденную переменную %USB_DRIVE%
+                    sw.WriteLine($"copy /y \"%USB_DRIVE%\\Soft\\{appName}\" \"{dest}\" > nul 2>&1");
 
-                    // Индивидуальная обработка DirectX
-                    if (appName.Contains("DirectX", StringComparison.OrdinalIgnoreCase))
-                    {
-                        sw.WriteLine($"echo [%date% %time%] Распаковка DirectX... >> \"{logFile}\"");
-                        sw.WriteLine("mkdir C:\\Windows\\Temp\\DX_Extract > nul 2>&1");
-                        sw.WriteLine($"start \"\" /wait \"{dest}\" /Q /T:C:\\Windows\\Temp\\DX_Extract");
-                        sw.WriteLine($"echo [%date% %time%] Установка DXSETUP.exe... >> \"{logFile}\"");
-                        sw.WriteLine("start \"\" /wait \"C:\\Windows\\Temp\\DX_Extract\\DXSETUP.exe\" /silent");
-                        sw.WriteLine($"echo [%date% %time%] DirectX завершен [Код: %errorlevel%] >> \"{logFile}\"");
-                        sw.WriteLine("rmdir /s /q C:\\Windows\\Temp\\DX_Extract > nul 2>&1");
-                        continue;
-                    }
-
-                    // Ключи тихой установки
                     string args = "/S";
                     if (appName.Contains("Chrome", StringComparison.OrdinalIgnoreCase))
                         args = "/silent /install";
                     else if (appName.Contains("VisualC", StringComparison.OrdinalIgnoreCase) || appName.Contains("vcredist", StringComparison.OrdinalIgnoreCase))
                         args = "/ai /gm2";
+                    else if (appName.Contains("DirectX", StringComparison.OrdinalIgnoreCase))
+                    {
+                        sw.WriteLine("mkdir C:\\Windows\\Temp\\DX_Extract > nul 2>&1");
+                        sw.WriteLine($"start \"\" /wait \"{dest}\" /Q /T:C:\\Windows\\Temp\\DX_Extract");
+                        sw.WriteLine("start \"\" /wait \"C:\\Windows\\Temp\\DX_Extract\\DXSETUP.exe\" /silent");
+                        sw.WriteLine("rmdir /s /q C:\\Windows\\Temp\\DX_Extract > nul 2>&1");
+                        continue;
+                    }
                     else if (appName.Contains("vlc", StringComparison.OrdinalIgnoreCase))
                         args = "/L=1049 /S";
                     else if (appName.Contains("NVIDIA", StringComparison.OrdinalIgnoreCase))
                         args = "-s";
 
-                    sw.WriteLine($"echo [%date% %time%] Запуск {appName} с аргументами: {args} >> \"{logFile}\"");
                     sw.WriteLine($"start \"\" /wait \"{dest}\" {args}");
-                    sw.WriteLine($"echo [%date% %time%] Завершено: {appName} [Код: %errorlevel%] >> \"{logFile}\"");
                 }
-
-                sw.WriteLine($"echo. >> \"{logFile}\"");
-                sw.WriteLine($"echo [%date% %time%] === ВСЕ ПРИЛОЖЕНИЯ УСТАНОВЛЕНЫ === >> \"{logFile}\"");
             }
+
 
             UpdateStatus("Развертывание завершено! Перезагрузка ПК через 10 секунд...");
             System.Threading.Thread.Sleep(10000);
             RunCommand("wpeutil.exe", "reboot");
         }
 
-        //private void ExecuteDeployment(string imagePath, List<string> apps)
-        //{
-        //    UpdateStatus("Тест: создание сценария установки софта на диске E:\\...");
 
-        //    string testScriptsDir = @"E:\Windows\Setup\Scripts";
-        //    Directory.CreateDirectory(testScriptsDir);
+        // Метод монтирования и правки реестра развернутой Windows W:\
+        private void ApplyOfflineRegistryTweaks(bool disableDefender, bool removeCopilot, bool disableTelemetry, bool disableEdge)
+        {
+            try
+            {
+                // Подключаем куст реестра HKLM\SOFTWARE распакованной системы
+                RunCommand("reg.exe", @"load HKLM\OFFLINE_SOFT W:\Windows\System32\config\SOFTWARE");
 
-        //    string cmdPath = Path.Combine(testScriptsDir, "SetupComplete.cmd");
+                if (disableDefender)
+                {
+                    RunCommand("reg.exe", @"add ""HKLM\OFFLINE_SOFT\Policies\Microsoft\Windows Defender"" /v DisableAntiSpyware /t REG_DWORD /d 1 /f");
+                    RunCommand("reg.exe", @"add ""HKLM\OFFLINE_SOFT\Policies\Microsoft\Windows Defender\Real-Time Protection"" /v DisableRealtimeMonitoring /t REG_DWORD /d 1 /f");
+                    RunCommand("reg.exe", @"add ""HKLM\OFFLINE_SOFT\Policies\Microsoft\Windows Defender\Real-Time Protection"" /v DisableBehaviorMonitoring /t REG_DWORD /d 1 /f");
+                }
 
-        //    // Задаем правильный путь к debug.log прямо в папке E:\Windows\Setup\Scripts
-        //    string logFile = Path.Combine(testScriptsDir, "debug.log");
+                if (removeCopilot)
+                {
+                    RunCommand("reg.exe", @"add HKLM\OFFLINE_SOFT\Policies\Microsoft\Windows\WindowsCopilot /v TurnOffWindowsCopilot /t REG_DWORD /d 1 /f");
+                    RunCommand("reg.exe", @"add HKLM\OFFLINE_SOFT\Microsoft\Windows\CurrentVersion\Explorer\Advanced /v ShowCopilotButton /t REG_DWORD /d 0 /f");
+                }
 
-        //    using (StreamWriter sw = File.CreateText(cmdPath))
-        //    {
-        //        sw.WriteLine("@echo off");
-        //        sw.WriteLine("chcp 65001 > nul");
+                if (disableTelemetry)
+                {
+                    RunCommand("reg.exe", @"add HKLM\OFFLINE_SOFT\Policies\Microsoft\Windows\DataCollection /v AllowTelemetry /t REG_DWORD /d 0 /f");
+                    RunCommand("reg.exe", @"add HKLM\OFFLINE_SOFT\Policies\Microsoft\Windows\DataCollection /v MaxTelemetryAllowed /t REG_DWORD /d 0 /f");
+                }
 
-        //        // Проверка прав администратора
-        //        sw.WriteLine("net session >nul 2>&1");
-        //        sw.WriteLine("if %errorlevel% neq 0 (");
-        //        sw.WriteLine("    echo [ОШИБКА] Запустите скрипт от имени Администратора!");
-        //        sw.WriteLine("    pause");
-        //        sw.WriteLine("    exit /b 1");
-        //        sw.WriteLine(")");
+                if (disableEdge)
+                {
+                    RunCommand("reg.exe", @"add HKLM\OFFLINE_SOFT\Policies\Microsoft\Edge /v StartupBoostEnabled /t REG_DWORD /d 0 /f");
+                    RunCommand("reg.exe", @"add HKLM\OFFLINE_SOFT\Policies\Microsoft\Edge /v BackgroundModeEnabled /t REG_DWORD /d 0 /f");
+                }
 
-        //        // 1. Инициализация debug.log на диске E:
-        //        sw.WriteLine($"echo [%date% %time%] === ТЕСТОВЫЙ ПРОГОН (БЕЗ РЕАЛЬНОЙ УСТАНОВКИ) === > \"{logFile}\"");
-
-        //        foreach (var appName in apps)
-        //        {
-        //            string source = Path.Combine(usbDrivePath, "Soft", appName);
-        //            string dest = $@"C:\Windows\Temp\{appName}";
-
-        //            sw.WriteLine($"echo. >> \"{logFile}\"");
-        //            sw.WriteLine($"echo [%date% %time%] Тест копирования: \"{appName}\" >> \"{logFile}\"");
-
-        //            // Имитация копирования (проверка наличия файла на флешке)
-        //            sw.WriteLine($"if exist \"{source}\" (echo [OK] Файл найден на носителе >> \"{logFile}\") else (echo [FAIL] Исходный файл не найден! >> \"{logFile}\")");
-
-        //            string args = "/S";
-        //            if (appName.Contains("Chrome", StringComparison.OrdinalIgnoreCase))
-        //                args = "/silent /install";
-        //            else if (appName.Contains("VisualC", StringComparison.OrdinalIgnoreCase) || appName.Contains("vcredist", StringComparison.OrdinalIgnoreCase))
-        //                args = "/ai /gm2";
-        //            else if (appName.Contains("DirectX", StringComparison.OrdinalIgnoreCase))
-        //                args = "/Q /T:C:\\Windows\\Temp\\DX_Extract и запуск DXSETUP.exe /silent"; // Убрали символ '>'
-        //            else if (appName.Contains("vlc", StringComparison.OrdinalIgnoreCase))
-        //                args = "/L=1049 /S";
-        //            else if (appName.Contains("NVIDIA", StringComparison.OrdinalIgnoreCase))
-        //                args = "-s";
-
-        //            // Логируем имитацию вызова без опасных спецсимволов
-        //            sw.WriteLine($"echo [%date% %time%] [СИМУЛЯЦИЯ ЗАПУСКА] \"{dest}\" с аргументами: {args} >> \"{logFile}\"");
-        //            sw.WriteLine($"echo [%date% %time%] Программа \"{appName}\" успешно проверена >> \"{logFile}\"");
-        //        }
-
-        //        sw.WriteLine($"echo. >> \"{logFile}\"");
-        //        sw.WriteLine($"echo [%date% %time%] === ТЕСТ ЗАВЕРШЕН, СОФТ НЕ ЗАТРОНУТ === >> \"{logFile}\"");
-        //        sw.WriteLine($"echo Тестовый лог сформирован в {logFile}");
-        //        sw.WriteLine("pause");
-        //    }
-
-        //    UpdateStatus("Тестовый скрипт без установки создан на E:\\!");
-        //}
+                // Обязательно выгружаем и сохраняем куст реестра
+                RunCommand("reg.exe", @"unload HKLM\OFFLINE_SOFT");
+            }
+            catch
+            {
+                // Игнорируем или логируем ошибки доступа к реестру
+            }
+        }
 
 
-
-
-
-
-        //private void ExecuteDeployment(string imagePath, List<string> apps)
-        //{
-        //    // 1. Форматирование диска через Diskpart
-        //    UpdateStatus("Конфигурация целевого накопителя (Diskpart)...");
-        //    string diskpartScript = Path.Combine(Path.GetTempPath(), "dp.txt");
-        //    File.WriteAllText(diskpartScript, "select disk 0\nclean\nconvert gpt\ncreate partition efi size=100\nformat quick fs=fat32 label=\"System\"\nassign letter=S\ncreate partition primary\nformat quick fs=ntfs label=\"Windows\"\nassign letter=W\nexit");
-        //    RunCommand("diskpart.exe", $"/s \"{diskpartScript}\"");
-
-        //    // 2. Развертывание ОС через DISM
-        //    UpdateStatus("Развертывание Windows 11 (DISM)... Это займет некоторое время.");
-        //    RunCommand("dism.exe", $"/Apply-Image /ImageFile:\"{imagePath}\" /Index:1 /ApplyDir:W:\\");
-
-        //    // 3. Генерация загрузчика UEFI
-        //    UpdateStatus("Создание системного загрузчика BCD...");
-        //    RunCommand("W:\\Windows\\System32\\bcdboot.exe", "W:\\Windows /s S: /f UEFI");
-
-        //    // 4. Подготовка сценария автоматической установки софта
-        //    UpdateStatus("Запись конфигурации SetupComplete.cmd...");
-        //    string cmdPath = "W:\\Windows\\Setup\\Scripts\\SetupComplete.cmd";
-        //    Directory.CreateDirectory(Path.GetDirectoryName(cmdPath));
-
-        //    using (StreamWriter sw = File.CreateText(cmdPath))
-        //    {
-        //        sw.WriteLine("@echo off");
-        //        foreach (var appName in apps)
-        //        {
-        //            string source = Path.Combine(usbDrivePath, "Soft", appName);
-        //            sw.WriteLine($"copy /y \"{source}\" \"C:\\Windows\\Temp\\{appName}\"");
-        //            sw.WriteLine($"start /wait C:\\Windows\\Temp\\{appName} /S /silent /quiet");
-        //        }
-        //    }
-
-        //    UpdateStatus("Развертывание завершено! Перезагрузка ПК через 10 секунд...");
-        //    System.Threading.Thread.Sleep(10000);
-        //    RunCommand("wpeutil.exe", "reboot");
-        //}
+        
 
         private void RunCommand(string filename, string arguments)
         {
