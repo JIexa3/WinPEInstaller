@@ -43,7 +43,7 @@
             <!-- Основной контент: 2 колонки -->
             <Grid Grid.Row="1">
                 <Grid.ColumnDefinitions>
-                    <ColumnDefinition Width="320" MinWidth="260"/>
+                    <ColumnDefinition Width="360" MinWidth="320"/>
                     <ColumnDefinition Width="*"/>
                 </Grid.ColumnDefinitions>
 
@@ -105,58 +105,89 @@
                         </ComboBox.ItemContainerStyle>
                     </ComboBox>
                     <!-- Блок 3. Твики и оптимизация -->
-                    <TextBlock Text="3. Твики и компоненты (отметьте для отключения)" 
+                    <!-- Заголовок с автоматическим переносом строки -->
+                    <TextBlock Text="3. Твики и компоненты (отметьте для применения)" 
            Foreground="{DynamicResource TextPrimaryBrush}" 
-           FontSize="14" FontWeight="SemiBold" Margin="0,16,0,10"/>
+           FontSize="14" FontWeight="SemiBold" 
+           TextWrapping="Wrap" Margin="0,16,0,10"/>
 
                     <Border Background="{DynamicResource CardBrush}" CornerRadius="8" Padding="12" 
         BorderBrush="{DynamicResource ControlBorderBrush}" BorderThickness="1">
                         <StackPanel>
-                            <CheckBox x:Name="ChkDisableDefender" IsChecked="True" Margin="0,4" VerticalContentAlignment="Center">
-                                <TextBlock Text="Отключить Защитник (Windows Defender)" Foreground="{DynamicResource TextPrimaryBrush}" FontSize="12"/>
+                            <CheckBox x:Name="ChkInstallOffice" IsChecked="True" Margin="0,5" VerticalContentAlignment="Center">
+                                <TextBlock Text="Установить Microsoft Office (Word, Excel, PowerPoint)" 
+                       Foreground="{DynamicResource TextPrimaryBrush}" FontSize="12" TextWrapping="Wrap"/>
                             </CheckBox>
 
-                            <CheckBox x:Name="ChkRemoveCopilot" IsChecked="True" Margin="0,4" VerticalContentAlignment="Center">
-                                <TextBlock Text="Полностью убрать Copilot (ИИ-панель)" Foreground="{DynamicResource TextPrimaryBrush}" FontSize="12"/>
+                            <CheckBox x:Name="ChkDisableDefender" IsChecked="True" Margin="0,5" VerticalContentAlignment="Center">
+                                <TextBlock Text="Отключить Защитник (Windows Defender)" 
+                       Foreground="{DynamicResource TextPrimaryBrush}" FontSize="12" TextWrapping="Wrap"/>
                             </CheckBox>
 
-                            <CheckBox x:Name="ChkDisableTelemetry" IsChecked="True" Margin="0,4" VerticalContentAlignment="Center">
-                                <TextBlock Text="Отключить телеметрию и сбор данных" Foreground="{DynamicResource TextPrimaryBrush}" FontSize="12"/>
+                            <CheckBox x:Name="ChkRemoveCopilot" IsChecked="True" Margin="0,5" VerticalContentAlignment="Center">
+                                <TextBlock Text="Полностью убрать Copilot (ИИ-панель)" 
+                       Foreground="{DynamicResource TextPrimaryBrush}" FontSize="12" TextWrapping="Wrap"/>
                             </CheckBox>
 
-                            <CheckBox x:Name="ChkDisableEdgeStartup" IsChecked="True" Margin="0,4" VerticalContentAlignment="Center">
-                                <TextBlock Text="Отключить автозапуск и фоновую работу Edge" Foreground="{DynamicResource TextPrimaryBrush}" FontSize="12"/>
+                            <CheckBox x:Name="ChkDisableTelemetry" IsChecked="True" Margin="0,5" VerticalContentAlignment="Center">
+                                <TextBlock Text="Отключить телеметрию и сбор данных" 
+                       Foreground="{DynamicResource TextPrimaryBrush}" FontSize="12" TextWrapping="Wrap"/>
+                            </CheckBox>
+
+                            <CheckBox x:Name="ChkDisableEdgeStartup" IsChecked="True" Margin="0,5" VerticalContentAlignment="Center">
+                                <TextBlock Text="Отключить автозапуск и фоновую работу Edge" 
+                       Foreground="{DynamicResource TextPrimaryBrush}" FontSize="12" TextWrapping="Wrap"/>
                             </CheckBox>
                         </StackPanel>
                     </Border>
+
+
 
                     <Border Background="{DynamicResource CardBrush}" CornerRadius="8" Margin="0,20,0,0" Padding="15" BorderBrush="{DynamicResource ControlBorderBrush}" BorderThickness="1">
                         <TextBlock x:Name="TxtInfo" Text="Информация о диске:&#x0a;Все разделы на накопителе (Disk 0) будут перезаписаны." 
                                    Foreground="{DynamicResource DangerBrush}" FontSize="12" TextWrapping="Wrap" LineHeight="18"/>
                     </Border>
                 </StackPanel>
-                <!-- Правая колонка: Плитка софта с иконками -->
-                <Grid Grid.Column="1">
+                <!-- Правая колонка: Структурированный софт по категориям -->
+                <Grid Grid.Column="1" Margin="20,0,0,0">
                     <Grid.RowDefinitions>
                         <RowDefinition Height="Auto"/>
                         <RowDefinition Height="*"/>
                     </Grid.RowDefinitions>
 
-                    <TextBlock Grid.Row="0" Text="2. Дополнительные приложения" Foreground="{DynamicResource TextPrimaryBrush}" FontSize="14" FontWeight="SemiBold" Margin="0,0,0,10"/>
+                    <TextBlock Grid.Row="0" Text="2. Дополнительные приложения (по категориям)" 
+               Foreground="{DynamicResource TextPrimaryBrush}" FontSize="15" FontWeight="SemiBold" Margin="0,0,0,10"/>
 
                     <ScrollViewer Grid.Row="1" VerticalScrollBarVisibility="Auto" HorizontalScrollBarVisibility="Disabled">
                         <ListBox x:Name="ListSoft" Background="Transparent" BorderThickness="0" ScrollViewer.HorizontalScrollBarVisibility="Disabled">
+
+                            <!-- Стиль заголовков категорий -->
+                            <ListBox.GroupStyle>
+                                <GroupStyle>
+                                    <GroupStyle.HeaderTemplate>
+                                        <DataTemplate>
+                                            <Border Margin="0,10,0,6" BorderBrush="{DynamicResource ControlBorderBrush}" BorderThickness="0,0,0,1" Padding="0,0,0,4">
+                                                <TextBlock Text="{Binding Name}" Foreground="{DynamicResource AccentBrush}" 
+                                           FontSize="13" FontWeight="Bold"/>
+                                            </Border>
+                                        </DataTemplate>
+                                    </GroupStyle.HeaderTemplate>
+                                </GroupStyle>
+                            </ListBox.GroupStyle>
+
+                            <!-- Адаптивная раскладка плиток внутри категорий -->
                             <ListBox.ItemsPanel>
                                 <ItemsPanelTemplate>
                                     <WrapPanel IsItemsHost="True" Orientation="Horizontal"/>
                                 </ItemsPanelTemplate>
                             </ListBox.ItemsPanel>
 
+                            <!-- Карточка приложения с понятной подписью -->
                             <ListBox.ItemTemplate>
                                 <DataTemplate>
-                                    <Border Width="170" Height="58" Background="{DynamicResource CardBrush}" 
-                                            CornerRadius="6" BorderBrush="{DynamicResource ControlBorderBrush}" 
-                                            BorderThickness="1" Margin="4" Padding="8">
+                                    <Border Width="195" Height="60" Background="{DynamicResource CardBrush}" 
+                            CornerRadius="6" BorderBrush="{DynamicResource ControlBorderBrush}" 
+                            BorderThickness="1" Margin="4" Padding="8">
                                         <Grid>
                                             <Grid.ColumnDefinitions>
                                                 <ColumnDefinition Width="Auto"/>
@@ -164,12 +195,15 @@
                                                 <ColumnDefinition Width="Auto"/>
                                             </Grid.ColumnDefinitions>
 
-                                            <Image Grid.Column="0" Source="{Binding Icon}" Width="28" Height="28" VerticalAlignment="Center" Margin="0,0,8,0"/>
+                                            <!-- Иконка программы -->
+                                            <Image Grid.Column="0" Source="{Binding Icon}" Width="28" Height="28" VerticalAlignment="Center" Margin="0,0,8,0" RenderOptions.BitmapScalingMode="HighQuality"/>
 
-                                            <TextBlock Grid.Column="1" Text="{Binding Name}" Foreground="{DynamicResource TextPrimaryBrush}" 
-                                                       FontSize="12" VerticalAlignment="Center" TextTrimming="CharacterEllipsis"/>
+                                            <!-- Человеческое название программы -->
+                                            <TextBlock Grid.Column="1" Text="{Binding DisplayName}" Foreground="{DynamicResource TextPrimaryBrush}" 
+                                       FontSize="12" FontWeight="Medium" VerticalAlignment="Center" TextWrapping="Wrap" LineHeight="14"/>
 
-                                            <CheckBox Grid.Column="2" IsChecked="{Binding IsSelected}" VerticalAlignment="Center" Margin="4,0,0,0"/>
+                                            <!-- Чекбокс выбора -->
+                                            <CheckBox Grid.Column="2" IsChecked="{Binding IsSelected}" VerticalAlignment="Center" Margin="6,0,0,0"/>
                                         </Grid>
                                     </Border>
                                 </DataTemplate>
@@ -190,6 +224,7 @@
                         </ListBox>
                     </ScrollViewer>
                 </Grid>
+
             </Grid>
 
             <!-- Нижняя панель -->

@@ -15,12 +15,16 @@ namespace WinPEInstallerWPF
     {
         private string usbDrivePath = "";
 
+
         public class SoftwareItem
         {
-            public string Name { get; set; }
+            public string Name { get; set; }           // Имя реального файла (для bat-скрипта)
+            public string DisplayName { get; set; }    // Красивое имя на экране
+            public string Category { get; set; }       // Категория (Система, Игры и т.д.)
             public bool IsSelected { get; set; } = true;
             public System.Windows.Media.ImageSource Icon { get; set; }
         }
+
 
         public MainWindow()
         {
@@ -313,7 +317,7 @@ namespace WinPEInstallerWPF
 
 
 
-      
+
 
         private void LoadAdditionalSoftware()
         {
@@ -325,20 +329,69 @@ namespace WinPEInstallerWPF
                 var apps = Directory.GetFiles(softPath, "*.exe");
                 foreach (var app in apps)
                 {
+                    string fileName = Path.GetFileName(app);
+
+                    // Пропускаем установщики Office, так как под него вынесена отдельная галочка слева
+                    if (fileName.Equals("Office.exe", StringComparison.OrdinalIgnoreCase) ||
+                        fileName.Equals("AUTORUN.exe", StringComparison.OrdinalIgnoreCase))
+                        continue;
+
+                    // Определяем категорию и красивое название
+                    var (category, friendlyName) = CategorizeSoftware(fileName);
+
                     softwareList.Add(new SoftwareItem
                     {
-                        Name = Path.GetFileName(app),
+                        Name = fileName,
+                        DisplayName = friendlyName,
+                        Category = category,
                         IsSelected = true,
                         Icon = GetIconFromFile(app)
                     });
                 }
             }
-            ListSoft.ItemsSource = softwareList;
+
+            // Привязываем данные через группировку по категориям для WPF
+            var view = (System.Windows.Data.ListCollectionView)System.Windows.Data.CollectionViewSource.GetDefaultView(softwareList);
+            view.GroupDescriptions.Add(new System.Windows.Data.PropertyGroupDescription("Category"));
+            ListSoft.ItemsSource = view;
         }
+        // Автоматический классификатор софта по типу
+        private (string Category, string FriendlyName) CategorizeSoftware(string file)
+        {
+            string f = file.ToLower();
+
+            // 1. Системные библиотеки и архиваторы
+            if (f.Contains("visualc") || f.Contains("vcredist")) return ("Системные компоненты", "Visual C++ 2005-2026");
+            if (f.Contains("directx")) return ("Системные компоненты", "DirectX Legacy (D3DX)");
+            if (f.Contains("7zip") || f.Contains("7z")) return ("Системные компоненты", "7-Zip Архиватор");
+
+            // 2. Интернет, связь и документы
+            if (f.Contains("chrome")) return ("Интернет и документы", "Google Chrome");
+            if (f.Contains("acro") || f.Contains("adobe")) return ("Интернет и документы", "Adobe Acrobat Reader");
+            if (f.Contains("foxit")) return ("Интернет и документы", "Foxit PDF Reader");
+            if (f.Contains("telegram")) return ("Интернет и документы", "Telegram Desktop");
+            if (f.Contains("discord")) return ("Интернет и документы", "Discord");
+
+            // 3. Игры и медиа
+            if (f.Contains("steam")) return ("Игры и мультимедиа", "Steam Client");
+            if (f.Contains("vlc")) return ("Игры и мультимедиа", "VLC Media Player");
+            if (f.Contains("nvidia")) return ("Игры и мультимедиа", "NVIDIA App");
+
+            // 4. Диагностика и обслуживание
+            if (f.Contains("aida")) return ("Диагностика и стресс-тесты", "AIDA64 Extreme");
+            if (f.Contains("crystaldisk")) return ("Диагностика и стресс-тесты", "CrystalDiskInfo (SSD)");
+            if (f.Contains("furmark")) return ("Диагностика и стресс-тесты", "FurMark (GPU Stress)");
+            if (f.Contains("hwinfo")) return ("Диагностика и стресс-тесты", "HWiNFO64");
+
+            // Если софт неизвестен
+            return ("Другие приложения", Path.GetFileNameWithoutExtension(file));
+        }
+
 
 
         private async void BtnStart_Click(object sender, RoutedEventArgs e)
         {
+
             if (ComboImages.SelectedItem == null)
             {
                 MessageBox.Show("Укажите требуемый образ Windows!");
@@ -356,24 +409,23 @@ namespace WinPEInstallerWPF
                 }
             }
 
-            // Считываем состояние чекбоксов твиков
+            bool installOffice = ChkInstallOffice.IsChecked == true;
             bool disableDefender = ChkDisableDefender.IsChecked == true;
             bool removeCopilot = ChkRemoveCopilot.IsChecked == true;
             bool disableTelemetry = ChkDisableTelemetry.IsChecked == true;
             bool disableEdge = ChkDisableEdgeStartup.IsChecked == true;
 
-            BtnStart.IsEnabled = false;
-            ProgressInstall.IsIndeterminate = true;
-
             await Task.Run(() => ExecuteDeployment(
                 selectedEdition.FilePath,
                 selectedEdition.Index,
                 selectedApps,
+                installOffice,
                 disableDefender,
                 removeCopilot,
                 disableTelemetry,
                 disableEdge
             ));
+
         }
 
 
@@ -385,6 +437,7 @@ namespace WinPEInstallerWPF
         string imagePath,
         int imageIndex,
         List<string> apps,
+        bool installOffice,
         bool disableDefender,
         bool removeCopilot,
         bool disableTelemetry,
@@ -418,36 +471,41 @@ namespace WinPEInstallerWPF
                 sw.WriteLine("@echo off");
                 sw.WriteLine("chcp 65001 > nul");
 
-                // БАТНИК САМ ИЩЕТ БУКВУ ФЛЕШКИ ПРИ ПЕРВОМ ВХОДЕ В WINDOWS
-                sw.WriteLine(":: Автопоиск буквы флешки по наличию папки Soft");
+                // Автопоиск буквы флешки
                 sw.WriteLine("set USB_DRIVE=");
                 sw.WriteLine("for %%D in (C D E F G H I J K L M N O P Q R S T U V W X Y Z) do (");
                 sw.WriteLine("    if exist \"%%D:\\Soft\" set USB_DRIVE=%%D:");
                 sw.WriteLine(")");
-                sw.WriteLine("if not defined USB_DRIVE (");
-                sw.WriteLine("    echo [ОШИБКА] Флешка с софтом не найдена! >> C:\\Windows\\Temp\\install.log");
-                sw.WriteLine("    exit /b 1");
-                sw.WriteLine(")");
 
+                if (installOffice)
+                {
+                    sw.WriteLine(":: Установка Microsoft Office LTSC (KpoJIuK)");
+                    sw.WriteLine("if exist \"%USB_DRIVE%\\Soft\\Office\\AUTORUN.exe\" (");
+                    sw.WriteLine("    echo [%date% %time%] Тихая установка Office LTSC... >> C:\\Windows\\Temp\\install.log");
+                    // Запуск прямо с флешки без лишнего копирования 3 ГБ во временную папку
+                    sw.WriteLine("    start \"\" /wait \"%USB_DRIVE%\\Soft\\Office\\AUTORUN.exe\" /S /PRO /ACT /RU");
+                    sw.WriteLine("    echo [%date% %time%] Office установлен [Код: %errorlevel%] >> C:\\Windows\\Temp\\install.log");
+                    sw.WriteLine(")");
+                }
+
+
+                // 2. Удаление Copilot (если выбрано)
                 if (removeCopilot)
                 {
                     sw.WriteLine("powershell -Command \"Get-AppxPackage -AllUsers *Copilot* | Remove-AppxPackage -AllUsers\" > nul 2>&1");
-                    sw.WriteLine("powershell -Command \"Get-AppxProvisionedPackage -Online | Where-Object DisplayName -like '*Copilot*' | Remove-AppxProvisionedPackage -Online\" > nul 2>&1");
                 }
 
+                // 3. Установка остального выбранного софта
                 foreach (var appName in apps)
                 {
-                    string dest = $@"C:\Windows\Temp\{appName}";
+                    // Пропускаем Office, если он обрабатывается отдельно
+                    if (appName.Equals("Office.exe", StringComparison.OrdinalIgnoreCase)) continue;
 
-                    // Копируем софт, используя найденную переменную %USB_DRIVE%
+                    string dest = $@"C:\Windows\Temp\{appName}";
                     sw.WriteLine($"copy /y \"%USB_DRIVE%\\Soft\\{appName}\" \"{dest}\" > nul 2>&1");
 
-                    string args = "/S";
-                    if (appName.Contains("Chrome", StringComparison.OrdinalIgnoreCase))
-                        args = "/silent /install";
-                    else if (appName.Contains("VisualC", StringComparison.OrdinalIgnoreCase) || appName.Contains("vcredist", StringComparison.OrdinalIgnoreCase))
-                        args = "/ai /gm2";
-                    else if (appName.Contains("DirectX", StringComparison.OrdinalIgnoreCase))
+                    // Обработка распаковки DirectX
+                    if (appName.Contains("DirectX", StringComparison.OrdinalIgnoreCase))
                     {
                         sw.WriteLine("mkdir C:\\Windows\\Temp\\DX_Extract > nul 2>&1");
                         sw.WriteLine($"start \"\" /wait \"{dest}\" /Q /T:C:\\Windows\\Temp\\DX_Extract");
@@ -455,13 +513,52 @@ namespace WinPEInstallerWPF
                         sw.WriteLine("rmdir /s /q C:\\Windows\\Temp\\DX_Extract > nul 2>&1");
                         continue;
                     }
+
+                    // Подбор ключей тихой установки под конкретные приложения
+                    string args = "/S"; // Базовый ключ (для 7-Zip, Steam, Notepad++)
+
+                    // 1. Браузер и системные библиотеки
+                    if (appName.Contains("Chrome", StringComparison.OrdinalIgnoreCase))
+                        args = "/silent /install";
+                    else if (appName.Contains("VisualC", StringComparison.OrdinalIgnoreCase) || appName.Contains("vcredist", StringComparison.OrdinalIgnoreCase))
+                        args = "/ai /gm2";
                     else if (appName.Contains("vlc", StringComparison.OrdinalIgnoreCase))
                         args = "/L=1049 /S";
                     else if (appName.Contains("NVIDIA", StringComparison.OrdinalIgnoreCase))
                         args = "-s";
 
+                    // 2. Мессенджеры и голосовая связь
+                    else if (appName.Contains("Telegram", StringComparison.OrdinalIgnoreCase))
+                        args = "/VERYSILENT /NORESTART /SP-";
+                    else if (appName.Contains("Discord", StringComparison.OrdinalIgnoreCase))
+                        args = "/s";
+
+                    // 3. Документы (Adobe Acrobat Reader / Foxit Reader)
+                    else if (appName.Contains("Acrobat", StringComparison.OrdinalIgnoreCase) || appName.Contains("Adobe", StringComparison.OrdinalIgnoreCase))
+                        args = "/sAll /rs /msi EULA_ACCEPT=YES";
+                    else if (appName.Contains("Foxit", StringComparison.OrdinalIgnoreCase))
+                        args = "/VERYSILENT";
+
+                    // 4. Диагностика железа и стресс-тесты
+                    else if (appName.Contains("AIDA", StringComparison.OrdinalIgnoreCase))
+                        args = "/SILENT";
+                    else if (appName.Contains("FurMark", StringComparison.OrdinalIgnoreCase))
+                        args = "/VERYSILENT";
+                    else if (appName.Contains("CrystalDisk", StringComparison.OrdinalIgnoreCase))
+                        args = "/VERYSILENT";
+                    else if (appName.Contains("HWiNFO", StringComparison.OrdinalIgnoreCase))
+                        args = "/VERYSILENT";
+
+                    // 5. Удаленный доступ и сеть
+                    else if (appName.Contains("AnyDesk", StringComparison.OrdinalIgnoreCase))
+                        args = "--install \"C:\\Program Files (x86)\\AnyDesk\" --silent";
+                    else if (appName.Contains("3DP", StringComparison.OrdinalIgnoreCase))
+                        args = "/s";
+
+                    // Запуск установщика в фоне
                     sw.WriteLine($"start \"\" /wait \"{dest}\" {args}");
                 }
+
             }
 
 

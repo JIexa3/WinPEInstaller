@@ -6,6 +6,11 @@
     <Nullable>enable</Nullable>
     <ImplicitUsings>enable</ImplicitUsings>
     <UseWPF>true</UseWPF>
+    <ApplicationIcon>Windows_Phone_icon-icons.com_66782.ico</ApplicationIcon>
   </PropertyGroup>
+
+  <ItemGroup>
+    <Content Include="Windows_Phone_icon-icons.com_66782.ico" />
+  </ItemGroup>
 
 </Project>
