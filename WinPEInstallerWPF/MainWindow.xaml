@@ -70,10 +70,13 @@
                                         </ToggleButton.Template>
                                     </ToggleButton>
 
-                                    <ContentPresenter Name="ContentSite" IsHitTestVisible="False" Content="{TemplateBinding SelectionBoxItem}"
-                                                      ContentTemplate="{TemplateBinding SelectionBoxItemTemplate}" ContentTemplateSelector="{TemplateBinding ItemTemplateSelector}"
-                                                      Margin="10,3,30,3" VerticalAlignment="Center" HorizontalAlignment="Left" 
-                                                      TextBlock.Foreground="{DynamicResource TextPrimaryBrush}" />
+                                    <ContentPresenter Name="ContentSite" IsHitTestVisible="False" 
+                                        Content="{TemplateBinding SelectionBoxItem}"
+                                        ContentTemplate="{TemplateBinding SelectionBoxItemTemplate}" 
+                                        ContentTemplateSelector="{TemplateBinding ItemTemplateSelector}"
+                                        Margin="10,3,30,3" VerticalAlignment="Center" HorizontalAlignment="Left" 
+                                        TextBlock.Foreground="{DynamicResource TextPrimaryBrush}" />
+
 
                                     <Popup Name="Popup" Placement="Bottom" IsOpen="{TemplateBinding IsDropDownOpen}" AllowsTransparency="True" Focusable="False" PopupAnimation="Slide">
                                         <Grid Name="DropDown" SnapsToDevicePixels="True" MinWidth="{TemplateBinding ActualWidth}" MaxHeight="{TemplateBinding MaxDropDownHeight}">
