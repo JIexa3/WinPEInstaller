@@ -1,3 +1,4 @@
 <Solution>
   <Project Path="WinPEInstallerWPF/WinPEInstallerWPF.csproj" />
+  <Project Path="WinPEInstalllerWPF/WinPEInstalllerWPF.csproj" Id="59c97c22-8b26-4ae4-9e33-c09e08b472f9" />
 </Solution>
