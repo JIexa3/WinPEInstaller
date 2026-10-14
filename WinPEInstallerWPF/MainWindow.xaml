@@ -148,7 +148,7 @@
                                    Foreground="{DynamicResource DangerBrush}" FontSize="12" TextWrapping="Wrap" LineHeight="18"/>
                     </Border>
                 </StackPanel>
-                <!-- Правая колонка: Структурированный софт по категориям -->
+                <!-- Правая колонка: Категории строками сверху вниз -->
                 <Grid Grid.Column="1" Margin="20,0,0,0">
                     <Grid.RowDefinitions>
                         <RowDefinition Height="Auto"/>
@@ -156,38 +156,53 @@
                     </Grid.RowDefinitions>
 
                     <TextBlock Grid.Row="0" Text="2. Дополнительные приложения (по категориям)" 
-               Foreground="{DynamicResource TextPrimaryBrush}" FontSize="15" FontWeight="SemiBold" Margin="0,0,0,10"/>
+               Foreground="{DynamicResource TextPrimaryBrush}" FontSize="15" FontWeight="SemiBold" Margin="0,0,0,12"/>
 
                     <ScrollViewer Grid.Row="1" VerticalScrollBarVisibility="Auto" HorizontalScrollBarVisibility="Disabled">
-                        <ListBox x:Name="ListSoft" Background="Transparent" BorderThickness="0" ScrollViewer.HorizontalScrollBarVisibility="Disabled">
-
-                            <!-- Стиль заголовков категорий -->
-                            <ListBox.GroupStyle>
+                        <ItemsControl x:Name="ListSoft" Background="Transparent" BorderThickness="0">
+                            <ItemsControl.GroupStyle>
                                 <GroupStyle>
-                                    <GroupStyle.HeaderTemplate>
-                                        <DataTemplate>
-                                            <Border Margin="0,10,0,6" BorderBrush="{DynamicResource ControlBorderBrush}" BorderThickness="0,0,0,1" Padding="0,0,0,4">
-                                                <TextBlock Text="{Binding Name}" Foreground="{DynamicResource AccentBrush}" 
-                                           FontSize="13" FontWeight="Bold"/>
-                                            </Border>
-                                        </DataTemplate>
-                                    </GroupStyle.HeaderTemplate>
+                                    <GroupStyle.ContainerStyle>
+                                        <Style TargetType="{x:Type GroupItem}">
+                                            <Setter Property="Template">
+                                                <Setter.Value>
+                                                    <ControlTemplate TargetType="{x:Type GroupItem}">
+                                                        <!-- Блок одной категории на всю ширину -->
+                                                        <StackPanel Margin="0,0,0,14">
+                                                            <!-- Полоса заголовка категории -->
+                                                            <Border BorderBrush="{DynamicResource ControlBorderBrush}" BorderThickness="0,0,0,1" Padding="0,0,0,4" Margin="0,0,0,8">
+                                                                <TextBlock Text="{Binding Name}" Foreground="{DynamicResource AccentBrush}" FontSize="13" FontWeight="Bold"/>
+                                                            </Border>
+
+                                                            <!-- Элементы внутри категории: строго в горизонтальный ряд -->
+                                                            <ItemsPresenter />
+                                                        </StackPanel>
+                                                    </ControlTemplate>
+                                                </Setter.Value>
+                                            </Setter>
+                                        </Style>
+                                    </GroupStyle.ContainerStyle>
+                                    <GroupStyle.Panel>
+                                        <ItemsPanelTemplate>
+                                            <VirtualizingStackPanel Orientation="Vertical" />
+                                        </ItemsPanelTemplate>
+                                    </GroupStyle.Panel>
                                 </GroupStyle>
-                            </ListBox.GroupStyle>
+                            </ItemsControl.GroupStyle>
 
-                            <!-- Адаптивная раскладка плиток внутри категорий -->
-                            <ListBox.ItemsPanel>
+                            <!-- Внутри каждой категории карточки выстраиваются в ряд слева направо -->
+                            <ItemsControl.ItemsPanel>
                                 <ItemsPanelTemplate>
-                                    <WrapPanel IsItemsHost="True" Orientation="Horizontal"/>
+                                    <WrapPanel Orientation="Horizontal"/>
                                 </ItemsPanelTemplate>
-                            </ListBox.ItemsPanel>
+                            </ItemsControl.ItemsPanel>
 
-                            <!-- Карточка приложения с понятной подписью -->
-                            <ListBox.ItemTemplate>
+                            <!-- Карточка отдельного приложения (3 штуки встанут в один ряд) -->
+                            <ItemsControl.ItemTemplate>
                                 <DataTemplate>
                                     <Border Width="195" Height="60" Background="{DynamicResource CardBrush}" 
                             CornerRadius="6" BorderBrush="{DynamicResource ControlBorderBrush}" 
-                            BorderThickness="1" Margin="4" Padding="8">
+                            BorderThickness="1" Margin="4,2" Padding="8,4">
                                         <Grid>
                                             <Grid.ColumnDefinitions>
                                                 <ColumnDefinition Width="Auto"/>
@@ -195,35 +210,30 @@
                                                 <ColumnDefinition Width="Auto"/>
                                             </Grid.ColumnDefinitions>
 
-                                            <!-- Иконка программы -->
-                                            <Image Grid.Column="0" Source="{Binding Icon}" Width="28" Height="28" VerticalAlignment="Center" Margin="0,0,8,0" RenderOptions.BitmapScalingMode="HighQuality"/>
+                                            <!-- Иконка приложения -->
+                                            <Image Grid.Column="0" Source="{Binding Icon}" Width="28" Height="28" 
+                                   VerticalAlignment="Center" Margin="0,0,8,0" 
+                                   RenderOptions.BitmapScalingMode="HighQuality"/>
 
-                                            <!-- Человеческое название программы -->
-                                            <TextBlock Grid.Column="1" Text="{Binding DisplayName}" Foreground="{DynamicResource TextPrimaryBrush}" 
-                                       FontSize="12" FontWeight="Medium" VerticalAlignment="Center" TextWrapping="Wrap" LineHeight="14"/>
+                                            <!-- Название программы -->
+                                            <TextBlock Grid.Column="1" Text="{Binding DisplayName}" 
+                                       Foreground="{DynamicResource TextPrimaryBrush}" 
+                                       FontSize="11.5" FontWeight="Medium" 
+                                       VerticalAlignment="Center" TextWrapping="Wrap" LineHeight="13"/>
 
                                             <!-- Чекбокс выбора -->
-                                            <CheckBox Grid.Column="2" IsChecked="{Binding IsSelected}" VerticalAlignment="Center" Margin="6,0,0,0"/>
+                                            <CheckBox Grid.Column="2" IsChecked="{Binding IsSelected}" 
+                                      VerticalAlignment="Center" Margin="4,0,0,0"/>
                                         </Grid>
                                     </Border>
                                 </DataTemplate>
-                            </ListBox.ItemTemplate>
-
-                            <ListBox.ItemContainerStyle>
-                                <Style TargetType="ListBoxItem">
-                                    <Setter Property="Background" Value="Transparent"/>
-                                    <Setter Property="Template">
-                                        <Setter.Value>
-                                            <ControlTemplate TargetType="ListBoxItem">
-                                                <ContentPresenter />
-                                            </ControlTemplate>
-                                        </Setter.Value>
-                                    </Setter>
-                                </Style>
-                            </ListBox.ItemContainerStyle>
-                        </ListBox>
+                            </ItemsControl.ItemTemplate>
+                        </ItemsControl>
                     </ScrollViewer>
                 </Grid>
+
+
+
 
             </Grid>
 

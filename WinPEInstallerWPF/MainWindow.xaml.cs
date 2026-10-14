@@ -358,34 +358,36 @@ namespace WinPEInstallerWPF
         // Автоматический классификатор софта по типу
         private (string Category, string FriendlyName) CategorizeSoftware(string file)
         {
-            string f = file.ToLower();
+            string f = file.ToLowerInvariant();
 
-            // 1. Системные библиотеки и архиваторы
+            // 1. Системные компоненты
             if (f.Contains("visualc") || f.Contains("vcredist")) return ("Системные компоненты", "Visual C++ 2005-2026");
             if (f.Contains("directx")) return ("Системные компоненты", "DirectX Legacy (D3DX)");
             if (f.Contains("7zip") || f.Contains("7z")) return ("Системные компоненты", "7-Zip Архиватор");
 
-            // 2. Интернет, связь и документы
+            // 2. Интернет и документы (qBittorrent строго здесь!)
             if (f.Contains("chrome")) return ("Интернет и документы", "Google Chrome");
             if (f.Contains("acro") || f.Contains("adobe")) return ("Интернет и документы", "Adobe Acrobat Reader");
+            if (f.Contains("torrent") || f.Contains("qbittorrent") || f.Contains("qbit")) return ("Интернет и документы", "qBittorrent");
             if (f.Contains("foxit")) return ("Интернет и документы", "Foxit PDF Reader");
             if (f.Contains("telegram")) return ("Интернет и документы", "Telegram Desktop");
             if (f.Contains("discord")) return ("Интернет и документы", "Discord");
 
-            // 3. Игры и медиа
-            if (f.Contains("steam")) return ("Игры и мультимедиа", "Steam Client");
-            if (f.Contains("vlc")) return ("Игры и мультимедиа", "VLC Media Player");
-            if (f.Contains("nvidia")) return ("Игры и мультимедиа", "NVIDIA App");
-
-            // 4. Диагностика и обслуживание
+            // 3. Диагностика и стресс-тесты
             if (f.Contains("aida")) return ("Диагностика и стресс-тесты", "AIDA64 Extreme");
             if (f.Contains("crystaldisk")) return ("Диагностика и стресс-тесты", "CrystalDiskInfo (SSD)");
             if (f.Contains("furmark")) return ("Диагностика и стресс-тесты", "FurMark (GPU Stress)");
             if (f.Contains("hwinfo")) return ("Диагностика и стресс-тесты", "HWiNFO64");
 
-            // Если софт неизвестен
+            // 4. Игры и мультимедиа
+            if (f.Contains("nvidia")) return ("Игры и мультимедиа", "NVIDIA App");
+            if (f.Contains("steam")) return ("Игры и мультимедиа", "Steam Client");
+            if (f.Contains("vlc")) return ("Игры и мультимедиа", "VLC Media Player");
+
             return ("Другие приложения", Path.GetFileNameWithoutExtension(file));
         }
+
+
 
 
 
