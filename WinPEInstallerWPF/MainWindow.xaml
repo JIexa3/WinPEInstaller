@@ -1,18 +1,86 @@
-﻿<Window x:Class="WinPEInstallerWPF.MainWindow" 
-        xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation" 
-        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml" 
-        xmlns:d="http://schemas.microsoft.com/expression/blend/2008" 
-        xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006" 
-        xmlns:local="clr-namespace:WinPEInstallerWPF" 
-        mc:Ignorable="d" 
-        Title="Windows 11 Custom OS Installer" 
-        Height="700" Width="1050" 
-        MinHeight="600" MinWidth="850" 
-        WindowStartupLocation="CenterScreen" 
-        WindowStyle="None" 
-        ResizeMode="CanResizeWithGrip" 
-        Background="Transparent" 
+﻿<Window x:Class="WinPEInstallerWPF.MainWindow"
+        xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        xmlns:d="http://schemas.microsoft.com/expression/blend/2008"
+        xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006"
+        xmlns:local="clr-namespace:WinPEInstallerWPF"
+        mc:Ignorable="d"
+        Title="Windows 11 Custom OS Installer"
+        Height="760" Width="1050"
+        MinHeight="640" MinWidth="850"
+        WindowStartupLocation="CenterScreen"
+        WindowStyle="None"
+        ResizeMode="CanResizeWithGrip"
+        Background="Transparent"
         AllowsTransparency="True">
+
+    <Window.Resources>
+        <!-- Общий стиль тёмной/светлой темы для ComboBox (образ ОС и выбор диска) -->
+        <Style x:Key="ThemedComboBox" TargetType="ComboBox">
+            <Setter Property="Height" Value="36"/>
+            <Setter Property="VerticalContentAlignment" Value="Center"/>
+            <Setter Property="Background" Value="{DynamicResource ControlBgBrush}"/>
+            <Setter Property="Foreground" Value="{DynamicResource TextPrimaryBrush}"/>
+            <Setter Property="BorderBrush" Value="{DynamicResource ControlBorderBrush}"/>
+            <Setter Property="ItemContainerStyle">
+                <Setter.Value>
+                    <Style TargetType="ComboBoxItem">
+                        <Setter Property="Foreground" Value="{DynamicResource TextPrimaryBrush}"/>
+                        <Setter Property="Background" Value="Transparent"/>
+                        <Setter Property="Padding" Value="8,6"/>
+                        <Style.Triggers>
+                            <Trigger Property="IsMouseOver" Value="True">
+                                <Setter Property="Background" Value="{DynamicResource ControlBgBrush}"/>
+                                <Setter Property="Foreground" Value="{DynamicResource AccentBrush}"/>
+                            </Trigger>
+                        </Style.Triggers>
+                    </Style>
+                </Setter.Value>
+            </Setter>
+            <Setter Property="Template">
+                <Setter.Value>
+                    <ControlTemplate TargetType="ComboBox">
+                        <Grid>
+                            <ToggleButton Name="ToggleButton" BorderBrush="{TemplateBinding BorderBrush}"
+                                          Background="{TemplateBinding Background}" Foreground="{TemplateBinding Foreground}"
+                                          Focusable="false"
+                                          IsChecked="{Binding Path=IsDropDownOpen, Mode=TwoWay, RelativeSource={RelativeSource TemplatedParent}}"
+                                          ClickMode="Press">
+                                <ToggleButton.Template>
+                                    <ControlTemplate TargetType="ToggleButton">
+                                        <Border Name="Border" CornerRadius="4" Background="{TemplateBinding Background}"
+                                                BorderBrush="{TemplateBinding BorderBrush}" BorderThickness="1">
+                                            <Path Name="Arrow" Fill="{DynamicResource TextPrimaryBrush}" HorizontalAlignment="Right"
+                                                  VerticalAlignment="Center" Margin="0,0,10,0" Data="M 0 0 L 4 4 L 8 0 Z"/>
+                                        </Border>
+                                    </ControlTemplate>
+                                </ToggleButton.Template>
+                            </ToggleButton>
+
+                            <ContentPresenter Name="ContentSite" IsHitTestVisible="False"
+                                              Content="{TemplateBinding SelectionBoxItem}"
+                                              ContentTemplate="{TemplateBinding SelectionBoxItemTemplate}"
+                                              ContentTemplateSelector="{TemplateBinding ItemTemplateSelector}"
+                                              Margin="10,3,30,3" VerticalAlignment="Center" HorizontalAlignment="Left"
+                                              TextBlock.Foreground="{DynamicResource TextPrimaryBrush}"/>
+
+                            <Popup Name="Popup" Placement="Bottom" IsOpen="{TemplateBinding IsDropDownOpen}"
+                                   AllowsTransparency="True" Focusable="False" PopupAnimation="Slide">
+                                <Grid Name="DropDown" SnapsToDevicePixels="True" MinWidth="{TemplateBinding ActualWidth}"
+                                      MaxHeight="{TemplateBinding MaxDropDownHeight}">
+                                    <Border Name="DropDownBorder" Background="{DynamicResource CardBrush}" BorderThickness="1"
+                                            BorderBrush="{DynamicResource ControlBorderBrush}" CornerRadius="4"/>
+                                    <ScrollViewer Margin="4,6,4,6" SnapsToDevicePixels="True">
+                                        <StackPanel IsItemsHost="True" KeyboardNavigation.DirectionalNavigation="Contained"/>
+                                    </ScrollViewer>
+                                </Grid>
+                            </Popup>
+                        </Grid>
+                    </ControlTemplate>
+                </Setter.Value>
+            </Setter>
+        </Style>
+    </Window.Resources>
 
     <Border CornerRadius="12" BorderBrush="{DynamicResource BorderBrush}" BorderThickness="1.5" Background="{DynamicResource BgBrush}">
         <Grid Margin="20">
@@ -47,116 +115,75 @@
                     <ColumnDefinition Width="*"/>
                 </Grid.ColumnDefinitions>
 
-                <!-- Левая колонка: Образ ОС -->
+                <!-- Левая колонка -->
                 <StackPanel Grid.Column="0" Margin="0,0,20,0">
                     <TextBlock Text="1. Выберите дистрибутив Windows" Foreground="{DynamicResource TextPrimaryBrush}" FontSize="14" FontWeight="SemiBold" Margin="0,0,0,10"/>
+                    <ComboBox x:Name="ComboImages" Style="{StaticResource ThemedComboBox}"/>
 
-                    <ComboBox x:Name="ComboImages" Height="36" VerticalContentAlignment="Center"
-                              Background="{DynamicResource ControlBgBrush}" Foreground="{DynamicResource TextPrimaryBrush}"
-                              BorderBrush="{DynamicResource ControlBorderBrush}">
-                        <ComboBox.Template>
-                            <ControlTemplate TargetType="ComboBox">
-                                <Grid>
-                                    <ToggleButton Name="ToggleButton" BorderBrush="{TemplateBinding BorderBrush}" 
-                                                  Background="{TemplateBinding Background}" Foreground="{TemplateBinding Foreground}"
-                                                  Grid.Column="2" Focusable="false" IsChecked="{Binding Path=IsDropDownOpen, Mode=TwoWay, RelativeSource={RelativeSource TemplatedParent}}" 
-                                                  ClickMode="Press">
-                                        <ToggleButton.Template>
-                                            <ControlTemplate TargetType="ToggleButton">
-                                                <Border Name="Border" CornerRadius="4" Background="{TemplateBinding Background}" BorderBrush="{TemplateBinding BorderBrush}" BorderThickness="1">
-                                                    <Path Name="Arrow" Fill="{DynamicResource TextPrimaryBrush}" HorizontalAlignment="Right" VerticalAlignment="Center" Margin="0,0,10,0" Data="M 0 0 L 4 4 L 8 0 Z"/>
-                                                </Border>
-                                            </ControlTemplate>
-                                        </ToggleButton.Template>
-                                    </ToggleButton>
+                    <!-- Выбор целевого диска -->
+                    <TextBlock Text="2. Диск для установки" Foreground="{DynamicResource TextPrimaryBrush}"
+                               FontSize="14" FontWeight="SemiBold" Margin="0,16,0,10"/>
+                    <Grid>
+                        <Grid.ColumnDefinitions>
+                            <ColumnDefinition Width="*"/>
+                            <ColumnDefinition Width="Auto"/>
+                        </Grid.ColumnDefinitions>
+                        <ComboBox x:Name="ComboDisks" Grid.Column="0" Style="{StaticResource ThemedComboBox}"
+                                  SelectionChanged="ComboDisks_SelectionChanged"/>
+                        <Button x:Name="BtnRefreshDisks" Grid.Column="1" Content="⟳" Width="36" Height="36" Margin="6,0,0,0"
+                                FontSize="16" Background="{DynamicResource ControlBgBrush}" Foreground="{DynamicResource TextPrimaryBrush}"
+                                BorderBrush="{DynamicResource ControlBorderBrush}" BorderThickness="1"
+                                ToolTip="Обновить список дисков" Click="BtnRefreshDisks_Click" Cursor="Hand"/>
+                    </Grid>
 
-                                    <ContentPresenter Name="ContentSite" IsHitTestVisible="False" 
-                                        Content="{TemplateBinding SelectionBoxItem}"
-                                        ContentTemplate="{TemplateBinding SelectionBoxItemTemplate}" 
-                                        ContentTemplateSelector="{TemplateBinding ItemTemplateSelector}"
-                                        Margin="10,3,30,3" VerticalAlignment="Center" HorizontalAlignment="Left" 
-                                        TextBlock.Foreground="{DynamicResource TextPrimaryBrush}" />
+                    <TextBlock Text="3. Твики и компоненты (отметьте для применения)"
+                               Foreground="{DynamicResource TextPrimaryBrush}"
+                               FontSize="14" FontWeight="SemiBold"
+                               TextWrapping="Wrap" Margin="0,16,0,10"/>
 
-
-                                    <Popup Name="Popup" Placement="Bottom" IsOpen="{TemplateBinding IsDropDownOpen}" AllowsTransparency="True" Focusable="False" PopupAnimation="Slide">
-                                        <Grid Name="DropDown" SnapsToDevicePixels="True" MinWidth="{TemplateBinding ActualWidth}" MaxHeight="{TemplateBinding MaxDropDownHeight}">
-                                            <Border Name="DropDownBorder" Background="{DynamicResource CardBrush}" BorderThickness="1" BorderBrush="{DynamicResource ControlBorderBrush}" CornerRadius="4"/>
-                                            <ScrollViewer Margin="4,6,4,6" SnapsToDevicePixels="True">
-                                                <StackPanel IsItemsHost="True" KeyboardNavigation.DirectionalNavigation="Contained" />
-                                            </ScrollViewer>
-                                        </Grid>
-                                    </Popup>
-                                </Grid>
-                            </ControlTemplate>
-                        </ComboBox.Template>
-
-                        <ComboBox.ItemContainerStyle>
-                            <Style TargetType="ComboBoxItem">
-                                <Setter Property="Foreground" Value="{DynamicResource TextPrimaryBrush}"/>
-                                <Setter Property="Background" Value="Transparent"/>
-                                <Setter Property="Padding" Value="8,6"/>
-                                <Style.Triggers>
-                                    <Trigger Property="IsMouseOver" Value="True">
-                                        <Setter Property="Background" Value="{DynamicResource ControlBgBrush}"/>
-                                        <Setter Property="Foreground" Value="{DynamicResource AccentBrush}"/>
-                                    </Trigger>
-                                </Style.Triggers>
-                            </Style>
-                        </ComboBox.ItemContainerStyle>
-                    </ComboBox>
-                    <!-- Блок 3. Твики и оптимизация -->
-                    <!-- Заголовок с автоматическим переносом строки -->
-                    <TextBlock Text="3. Твики и компоненты (отметьте для применения)" 
-           Foreground="{DynamicResource TextPrimaryBrush}" 
-           FontSize="14" FontWeight="SemiBold" 
-           TextWrapping="Wrap" Margin="0,16,0,10"/>
-
-                    <Border Background="{DynamicResource CardBrush}" CornerRadius="8" Padding="12" 
-        BorderBrush="{DynamicResource ControlBorderBrush}" BorderThickness="1">
+                    <Border Background="{DynamicResource CardBrush}" CornerRadius="8" Padding="12"
+                            BorderBrush="{DynamicResource ControlBorderBrush}" BorderThickness="1">
                         <StackPanel>
                             <CheckBox x:Name="ChkInstallOffice" IsChecked="True" Margin="0,5" VerticalContentAlignment="Center">
-                                <TextBlock Text="Установить Microsoft Office (Word, Excel, PowerPoint)" 
-                       Foreground="{DynamicResource TextPrimaryBrush}" FontSize="12" TextWrapping="Wrap"/>
+                                <TextBlock Text="Установить Microsoft Office (Word, Excel, PowerPoint)"
+                                           Foreground="{DynamicResource TextPrimaryBrush}" FontSize="12" TextWrapping="Wrap"/>
                             </CheckBox>
-
                             <CheckBox x:Name="ChkDisableDefender" IsChecked="True" Margin="0,5" VerticalContentAlignment="Center">
-                                <TextBlock Text="Отключить Защитник (Windows Defender)" 
-                       Foreground="{DynamicResource TextPrimaryBrush}" FontSize="12" TextWrapping="Wrap"/>
+                                <TextBlock Text="Отключить Защитник (Windows Defender)"
+                                           Foreground="{DynamicResource TextPrimaryBrush}" FontSize="12" TextWrapping="Wrap"/>
                             </CheckBox>
-
                             <CheckBox x:Name="ChkRemoveCopilot" IsChecked="True" Margin="0,5" VerticalContentAlignment="Center">
-                                <TextBlock Text="Полностью убрать Copilot (ИИ-панель)" 
-                       Foreground="{DynamicResource TextPrimaryBrush}" FontSize="12" TextWrapping="Wrap"/>
+                                <TextBlock Text="Полностью убрать Copilot (ИИ-панель)"
+                                           Foreground="{DynamicResource TextPrimaryBrush}" FontSize="12" TextWrapping="Wrap"/>
                             </CheckBox>
-
                             <CheckBox x:Name="ChkDisableTelemetry" IsChecked="True" Margin="0,5" VerticalContentAlignment="Center">
-                                <TextBlock Text="Отключить телеметрию и сбор данных" 
-                       Foreground="{DynamicResource TextPrimaryBrush}" FontSize="12" TextWrapping="Wrap"/>
+                                <TextBlock Text="Отключить телеметрию и сбор данных"
+                                           Foreground="{DynamicResource TextPrimaryBrush}" FontSize="12" TextWrapping="Wrap"/>
                             </CheckBox>
-
                             <CheckBox x:Name="ChkDisableEdgeStartup" IsChecked="True" Margin="0,5" VerticalContentAlignment="Center">
-                                <TextBlock Text="Отключить автозапуск и фоновую работу Edge" 
-                       Foreground="{DynamicResource TextPrimaryBrush}" FontSize="12" TextWrapping="Wrap"/>
+                                <TextBlock Text="Отключить автозапуск и фоновую работу Edge"
+                                           Foreground="{DynamicResource TextPrimaryBrush}" FontSize="12" TextWrapping="Wrap"/>
                             </CheckBox>
                         </StackPanel>
                     </Border>
 
-
-
-                    <Border Background="{DynamicResource CardBrush}" CornerRadius="8" Margin="0,20,0,0" Padding="15" BorderBrush="{DynamicResource ControlBorderBrush}" BorderThickness="1">
-                        <TextBlock x:Name="TxtInfo" Text="Информация о диске:&#x0a;Все разделы на накопителе (Disk 0) будут перезаписаны." 
+                    <Border Background="{DynamicResource CardBrush}" CornerRadius="8" Margin="0,20,0,0" Padding="15"
+                            BorderBrush="{DynamicResource ControlBorderBrush}" BorderThickness="1">
+                        <TextBlock x:Name="TxtInfo"
+                                   Text="⚠ Выбранный диск будет полностью очищен: все разделы и данные на нём удалятся."
                                    Foreground="{DynamicResource DangerBrush}" FontSize="12" TextWrapping="Wrap" LineHeight="18"/>
                     </Border>
                 </StackPanel>
-                <!-- Правая колонка: Категории строками сверху вниз -->
+
+                <!-- Правая колонка: категории софта -->
                 <Grid Grid.Column="1" Margin="20,0,0,0">
                     <Grid.RowDefinitions>
                         <RowDefinition Height="Auto"/>
                         <RowDefinition Height="*"/>
                     </Grid.RowDefinitions>
 
-                    <TextBlock Grid.Row="0" Text="2. Дополнительные приложения (по категориям)" 
-               Foreground="{DynamicResource TextPrimaryBrush}" FontSize="15" FontWeight="SemiBold" Margin="0,0,0,12"/>
+                    <TextBlock Grid.Row="0" Text="4. Дополнительные приложения (по категориям)"
+                               Foreground="{DynamicResource TextPrimaryBrush}" FontSize="15" FontWeight="SemiBold" Margin="0,0,0,12"/>
 
                     <ScrollViewer Grid.Row="1" VerticalScrollBarVisibility="Auto" HorizontalScrollBarVisibility="Disabled">
                         <ItemsControl x:Name="ListSoft" Background="Transparent" BorderThickness="0">
@@ -167,15 +194,11 @@
                                             <Setter Property="Template">
                                                 <Setter.Value>
                                                     <ControlTemplate TargetType="{x:Type GroupItem}">
-                                                        <!-- Блок одной категории на всю ширину -->
                                                         <StackPanel Margin="0,0,0,14">
-                                                            <!-- Полоса заголовка категории -->
                                                             <Border BorderBrush="{DynamicResource ControlBorderBrush}" BorderThickness="0,0,0,1" Padding="0,0,0,4" Margin="0,0,0,8">
                                                                 <TextBlock Text="{Binding Name}" Foreground="{DynamicResource AccentBrush}" FontSize="13" FontWeight="Bold"/>
                                                             </Border>
-
-                                                            <!-- Элементы внутри категории: строго в горизонтальный ряд -->
-                                                            <ItemsPresenter />
+                                                            <ItemsPresenter/>
                                                         </StackPanel>
                                                     </ControlTemplate>
                                                 </Setter.Value>
@@ -184,46 +207,38 @@
                                     </GroupStyle.ContainerStyle>
                                     <GroupStyle.Panel>
                                         <ItemsPanelTemplate>
-                                            <VirtualizingStackPanel Orientation="Vertical" />
+                                            <VirtualizingStackPanel Orientation="Vertical"/>
                                         </ItemsPanelTemplate>
                                     </GroupStyle.Panel>
                                 </GroupStyle>
                             </ItemsControl.GroupStyle>
 
-                            <!-- Внутри каждой категории карточки выстраиваются в ряд слева направо -->
                             <ItemsControl.ItemsPanel>
                                 <ItemsPanelTemplate>
                                     <WrapPanel Orientation="Horizontal"/>
                                 </ItemsPanelTemplate>
                             </ItemsControl.ItemsPanel>
 
-                            <!-- Карточка отдельного приложения (3 штуки встанут в один ряд) -->
                             <ItemsControl.ItemTemplate>
                                 <DataTemplate>
-                                    <Border Width="195" Height="60" Background="{DynamicResource CardBrush}" 
-                            CornerRadius="6" BorderBrush="{DynamicResource ControlBorderBrush}" 
-                            BorderThickness="1" Margin="4,2" Padding="8,4">
+                                    <Border Width="195" Height="60" Background="{DynamicResource CardBrush}"
+                                            CornerRadius="6" BorderBrush="{DynamicResource ControlBorderBrush}"
+                                            BorderThickness="1" Margin="4,2" Padding="8,4">
                                         <Grid>
                                             <Grid.ColumnDefinitions>
                                                 <ColumnDefinition Width="Auto"/>
                                                 <ColumnDefinition Width="*"/>
                                                 <ColumnDefinition Width="Auto"/>
                                             </Grid.ColumnDefinitions>
-
-                                            <!-- Иконка приложения -->
-                                            <Image Grid.Column="0" Source="{Binding Icon}" Width="28" Height="28" 
-                                   VerticalAlignment="Center" Margin="0,0,8,0" 
-                                   RenderOptions.BitmapScalingMode="HighQuality"/>
-
-                                            <!-- Название программы -->
-                                            <TextBlock Grid.Column="1" Text="{Binding DisplayName}" 
-                                       Foreground="{DynamicResource TextPrimaryBrush}" 
-                                       FontSize="11.5" FontWeight="Medium" 
-                                       VerticalAlignment="Center" TextWrapping="Wrap" LineHeight="13"/>
-
-                                            <!-- Чекбокс выбора -->
-                                            <CheckBox Grid.Column="2" IsChecked="{Binding IsSelected}" 
-                                      VerticalAlignment="Center" Margin="4,0,0,0"/>
+                                            <Image Grid.Column="0" Source="{Binding Icon}" Width="28" Height="28"
+                                                   VerticalAlignment="Center" Margin="0,0,8,0"
+                                                   RenderOptions.BitmapScalingMode="HighQuality"/>
+                                            <TextBlock Grid.Column="1" Text="{Binding DisplayName}"
+                                                       Foreground="{DynamicResource TextPrimaryBrush}"
+                                                       FontSize="11.5" FontWeight="Medium"
+                                                       VerticalAlignment="Center" TextWrapping="Wrap" LineHeight="13"/>
+                                            <CheckBox Grid.Column="2" IsChecked="{Binding IsSelected}"
+                                                      VerticalAlignment="Center" Margin="4,0,0,0"/>
                                         </Grid>
                                     </Border>
                                 </DataTemplate>
@@ -231,10 +246,6 @@
                         </ItemsControl>
                     </ScrollViewer>
                 </Grid>
-
-
-
-
             </Grid>
 
             <!-- Нижняя панель -->
@@ -246,10 +257,12 @@
 
                 <StackPanel Grid.Column="0" VerticalAlignment="Center" Margin="0,0,20,0">
                     <TextBlock x:Name="LblStatus" Text="Ожидание выбора параметров..." Foreground="{DynamicResource AccentBrush}" FontSize="13" FontWeight="Medium"/>
-                    <ProgressBar x:Name="ProgressInstall" Height="6" Margin="0,8,0,0" Background="{DynamicResource ControlBgBrush}" Foreground="{DynamicResource AccentBrush}" IsIndeterminate="False" BorderThickness="0"/>
+                    <ProgressBar x:Name="ProgressInstall" Height="6" Margin="0,8,0,0" Minimum="0" Maximum="100"
+                                 Background="{DynamicResource ControlBgBrush}" Foreground="{DynamicResource AccentBrush}"
+                                 IsIndeterminate="False" BorderThickness="0"/>
                 </StackPanel>
 
-                <Button Grid.Column="1" x:Name="BtnStart" Content="НАЧАТЬ УСТАНОВКУ" Width="180" Height="40" 
+                <Button Grid.Column="1" x:Name="BtnStart" Content="НАЧАТЬ УСТАНОВКУ" Width="180" Height="40"
                         Background="{DynamicResource AccentBrush}" Foreground="{DynamicResource ButtonTextBrush}" FontWeight="Bold" FontSize="12"
                         BorderThickness="0" Click="BtnStart_Click" Cursor="Hand">
                     <Button.Resources>

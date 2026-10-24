@@ -1,12 +1,14 @@
-﻿using System;
+﻿using Microsoft.Win32;
+using System;
 using System.Collections.Generic;
 using System.Diagnostics;
+using System.Globalization;
 using System.IO;
+using System.Linq;
+using System.Text;
+using System.Text.RegularExpressions;
 using System.Threading.Tasks;
 using System.Windows;
-using System.Drawing;
-using System.Windows.Interop;
-using System.Windows.Media;
 using System.Windows.Media.Imaging;
 
 namespace WinPEInstallerWPF
@@ -14,64 +16,145 @@ namespace WinPEInstallerWPF
     public partial class MainWindow : Window
     {
         private string usbDrivePath = "";
+        private string logPath = "";
+        private readonly object logLock = new();
+        private int? bootDiskNumber;          // номер диска, на котором лежит сама флешка
+        private bool isDarkTheme = true;
 
+        // Консольные утилиты (diskpart, dism) пишут в OEM-кодировке (cp866 на русской системе)
+        private static readonly Encoding OemEncoding = GetOemEncoding();
+
+        private static Encoding GetOemEncoding()
+        {
+            try
+            {
+                Encoding.RegisterProvider(CodePagesEncodingProvider.Instance);
+                return Encoding.GetEncoding(CultureInfo.CurrentCulture.TextInfo.OEMCodePage);
+            }
+            catch { return Encoding.Default; }
+        }
+
+        // Ключ MiniNT существует только в WinPE
+        private static bool IsWinPE
+        {
+            get
+            {
+                try
+                {
+                    using var key = Registry.LocalMachine.OpenSubKey(@"SYSTEM\CurrentControlSet\Control\MiniNT");
+                    return key != null;
+                }
+                catch { return false; }
+            }
+        }
+
+        // ───────────────────────── Модели ─────────────────────────
 
         public class SoftwareItem
         {
-            public string Name { get; set; }           // Имя реального файла (для bat-скрипта)
-            public string DisplayName { get; set; }    // Красивое имя на экране
-            public string Category { get; set; }       // Категория (Система, Игры и т.д.)
+            public string Name { get; set; } = "";          // Имя реального файла
+            public string DisplayName { get; set; } = "";   // Красивое имя на экране
+            public string Category { get; set; } = "";
             public bool IsSelected { get; set; } = true;
-            public System.Windows.Media.ImageSource Icon { get; set; }
+            public System.Windows.Media.ImageSource? Icon { get; set; }
         }
 
+        public class WindowsEditionItem
+        {
+            public string DisplayName { get; set; } = "";
+            public string FilePath { get; set; } = "";
+            public int Index { get; set; }
+            public override string ToString() => DisplayName;
+        }
+
+        public class DiskItem
+        {
+            public int Number { get; set; }
+            public string Size { get; set; } = "";
+            public string Model { get; set; } = "";
+            public string BusType { get; set; } = "";
+            public bool IsBootMedia { get; set; }
+            public string Status { get; set; } = "";
+            public bool IsRunningSystem { get; set; }
+
+            public override string ToString()
+            {
+                string s = $"Диск {Number} — {Size}";
+                if (!string.IsNullOrWhiteSpace(Model)) s += $" — {Model}";
+                if (!string.IsNullOrWhiteSpace(BusType)) s += $" [{BusType}]";
+                if (!string.IsNullOrWhiteSpace(Status) &&
+                    !Status.Equals("Online", StringComparison.OrdinalIgnoreCase) &&
+                    !Status.Equals("В сети", StringComparison.OrdinalIgnoreCase))
+                    s += $" ({Status})";
+                if (IsBootMedia) s += "  ⛔ ЗАГРУЗОЧНАЯ ФЛЕШКА";
+                if (IsRunningSystem) s += "  ⚠ ТЕКУЩАЯ WINDOWS";
+                return s;
+            }
+        }
+
+        // ───────────────────────── Инициализация ─────────────────────────
 
         public MainWindow()
         {
             InitializeComponent();
+            InitLog();
             FindUsbDrive();
             LoadWindowsImages();
             LoadAdditionalSoftware();
+            Loaded += async (_, _) => await LoadDisksAsync();
         }
-        public class WindowsEditionItem
+
+        private void InitLog()
         {
-            public string DisplayName { get; set; }
-            public string FilePath { get; set; }
-            public int Index { get; set; }
-
-            public override string ToString() => DisplayName;
+            logPath = Directory.Exists(@"X:\")
+                ? @"X:\deploy.log"
+                : Path.Combine(Path.GetTempPath(), "deploy.log");
+            Log($"=== Запуск инсталлера (WinPE: {IsWinPE}, OEM codepage: {OemEncoding.CodePage}) ===");
         }
 
-
-        private System.Windows.Media.ImageSource GetIconFromFile(string filePath)
+        private void Log(string message)
         {
             try
             {
-                // Указываем точный путь к системному классу System.Drawing.Icon
-                using (System.Drawing.Icon sysIcon = System.Drawing.Icon.ExtractAssociatedIcon(filePath))
+                lock (logLock)
+                    File.AppendAllText(logPath, $"[{DateTime.Now:HH:mm:ss}] {message}{Environment.NewLine}", Encoding.UTF8);
+            }
+            catch { /* лог не должен ронять установку */ }
+        }
+
+        private void FlushLogToUsb()
+        {
+            try
+            {
+                if (string.IsNullOrEmpty(usbDrivePath) || !File.Exists(logPath)) return;
+                string dir = Path.Combine(usbDrivePath, "logs");
+                Directory.CreateDirectory(dir);
+                File.Copy(logPath, Path.Combine(dir, $"deploy_{DateTime.Now:yyyyMMdd_HHmmss}.log"), true);
+            }
+            catch { }
+        }
+
+        private System.Windows.Media.ImageSource? GetIconFromFile(string filePath)
+        {
+            try
+            {
+                using (System.Drawing.Icon? sysIcon = System.Drawing.Icon.ExtractAssociatedIcon(filePath))
                 {
                     if (sysIcon != null)
                     {
                         return System.Windows.Interop.Imaging.CreateBitmapSourceFromHIcon(
-                            sysIcon.Handle,
-                            Int32Rect.Empty,
-                            BitmapSizeOptions.FromEmptyOptions());
+                            sysIcon.Handle, Int32Rect.Empty, BitmapSizeOptions.FromEmptyOptions());
                     }
                 }
             }
-            catch
-            {
-                // Если у файла поврежден заголовок или нет иконки
-            }
+            catch { }
             return null;
         }
 
-
         private void FindUsbDrive()
         {
-            // 1. Проверяем накопитель, с которого запущена сама программа
             string appDir = AppDomain.CurrentDomain.BaseDirectory;
-            string appDrive = Path.GetPathRoot(appDir);
+            string appDrive = Path.GetPathRoot(appDir) ?? "";
 
             if (!string.IsNullOrEmpty(appDrive) &&
                 Directory.Exists(Path.Combine(appDrive, "Images")) &&
@@ -79,45 +162,46 @@ namespace WinPEInstallerWPF
             {
                 usbDrivePath = appDrive;
                 LblStatus.Text = $"Носитель определен: {usbDrivePath}";
+                Log($"USB (по пути приложения): {usbDrivePath}");
                 return;
             }
 
-            // 2. Если запущено из RAM-диска (X:\) в WinPE — ищем флешку среди всех дисков
+            var candidates = new List<DriveInfo>();
             foreach (var drive in DriveInfo.GetDrives())
             {
                 try
                 {
-                    // Проверяем только готовые к чтению диски и пропускаем временный диск X:\
-                    if (drive.IsReady && !drive.Name.StartsWith("X", StringComparison.OrdinalIgnoreCase))
+                    if (drive.IsReady && !drive.Name.StartsWith("X", StringComparison.OrdinalIgnoreCase) &&
+                        Directory.Exists(Path.Combine(drive.Name, "Images")) &&
+                        Directory.Exists(Path.Combine(drive.Name, "Soft")))
                     {
-                        string imagesFolder = Path.Combine(drive.Name, "Images");
-                        string softFolder = Path.Combine(drive.Name, "Soft");
-
-                        // Ищем накопитель, содержащий обе наши рабочие папки
-                        if (Directory.Exists(imagesFolder) && Directory.Exists(softFolder))
-                        {
-                            usbDrivePath = drive.Name;
-                            LblStatus.Text = $"Флешка обнаружена: {usbDrivePath}";
-                            return;
-                        }
+                        candidates.Add(drive);
                     }
                 }
-                catch
-                {
-                    // Игнорируем дисководы или заблокированные картридеры
-                }
+                catch { }
             }
 
-            // 3. Если папки не найдены ни на одном диске
+            // Сменные носители (USB-флешки) в приоритете: на постоянных дисках папки Images/Soft могут просто лежать «на хранении»
+            var chosen = candidates.OrderBy(d => d.DriveType == DriveType.Removable ? 0 : 1).FirstOrDefault();
+            if (chosen != null)
+            {
+                usbDrivePath = chosen.Name;
+                LblStatus.Text = $"Флешка обнаружена: {usbDrivePath}";
+                Log($"USB (поиск по дискам): {usbDrivePath}; кандидаты: " +
+                    string.Join(", ", candidates.Select(d => $"{d.Name} [{d.DriveType}]")));
+                return;
+            }
+
             usbDrivePath = "";
             LblStatus.Text = "Ошибка: Флешка с папками 'Images' и 'Soft' не найдена!";
+            Log("USB не найдена");
             MessageBox.Show(
                 "Не удалось автоматически найти установочную флешку.\n" +
                 "Убедитесь, что в корне накопителя созданы папки 'Images' и 'Soft'.",
-                "Носитель не найден",
-                MessageBoxButton.OK,
-                MessageBoxImage.Warning);
+                "Носитель не найден", MessageBoxButton.OK, MessageBoxImage.Warning);
         }
+
+        // ───────────────────────── Образы Windows ─────────────────────────
 
         private void LoadWindowsImages()
         {
@@ -126,63 +210,25 @@ namespace WinPEInstallerWPF
 
             ComboImages.Items.Clear();
 
-            // 1. Проверяем образ Windows 11
             string win11Path = Path.Combine(imagesPath, "Win11.wim");
             if (File.Exists(win11Path))
             {
-                ComboImages.Items.Add(new WindowsEditionItem
-                {
-                    DisplayName = "Windows 11 Профессиональная (Pro)",
-                    FilePath = win11Path,
-                    Index = 4 // Индекс Pro из вашего скриншота DISM
-                });
-
-                ComboImages.Items.Add(new WindowsEditionItem
-                {
-                    DisplayName = "Windows 11 Домашняя (Home)",
-                    FilePath = win11Path,
-                    Index = 1 // Индекс Home из вашего скриншота DISM
-                });
-
-                ComboImages.Items.Add(new WindowsEditionItem
-                {
-                    DisplayName = "Windows 11 Домашняя для одного языка",
-                    FilePath = win11Path,
-                    Index = 2
-                });
-
-                ComboImages.Items.Add(new WindowsEditionItem
-                {
-                    DisplayName = "Windows 11 Для образовательных учреждений",
-                    FilePath = win11Path,
-                    Index = 3
-                });
+                ComboImages.Items.Add(new WindowsEditionItem { DisplayName = "Windows 11 Профессиональная (Pro)", FilePath = win11Path, Index = 4 });
+                ComboImages.Items.Add(new WindowsEditionItem { DisplayName = "Windows 11 Домашняя (Home)", FilePath = win11Path, Index = 1 });
+                ComboImages.Items.Add(new WindowsEditionItem { DisplayName = "Windows 11 Домашняя для одного языка", FilePath = win11Path, Index = 2 });
+                ComboImages.Items.Add(new WindowsEditionItem { DisplayName = "Windows 11 Для образовательных учреждений", FilePath = win11Path, Index = 3 });
             }
 
-            // 2. Проверяем образ Windows 10
             string win10Path = Path.Combine(imagesPath, "Win10.wim");
             if (File.Exists(win10Path))
             {
-                ComboImages.Items.Add(new WindowsEditionItem
-                {
-                    DisplayName = "Windows 10 Профессиональная (Pro)",
-                    FilePath = win10Path,
-                    Index = 2 // Индекс Pro для Win10
-                });
-
-                ComboImages.Items.Add(new WindowsEditionItem
-                {
-                    DisplayName = "Windows 10 Домашняя (Home)",
-                    FilePath = win10Path,
-                    Index = 1 // Индекс Home для Win10
-                });
+                ComboImages.Items.Add(new WindowsEditionItem { DisplayName = "Windows 10 Профессиональная (Pro)", FilePath = win10Path, Index = 2 });
+                ComboImages.Items.Add(new WindowsEditionItem { DisplayName = "Windows 10 Домашняя (Home)", FilePath = win10Path, Index = 1 });
             }
 
-            // Если файлы называются иначе, добавляем универсальное чтение
             if (ComboImages.Items.Count == 0)
             {
-                var files = Directory.GetFiles(imagesPath, "*.wim");
-                foreach (var file in files)
+                foreach (var file in Directory.GetFiles(imagesPath, "*.wim"))
                 {
                     ComboImages.Items.Add(new WindowsEditionItem
                     {
@@ -197,127 +243,7 @@ namespace WinPEInstallerWPF
                 ComboImages.SelectedIndex = 0;
         }
 
-        private List<WindowsEditionItem> GetWimEditions(string wimPath)
-        {
-            var list = new List<WindowsEditionItem>();
-
-            try
-            {
-                // Команда PowerShell для получения индекса и имени через разделитель "###"
-                string psCommand = $"Get-WindowsImage -ImagePath '{wimPath}' | ForEach-Object {{ \"$($_.ImageIndex)###$($_.ImageName)\" }}";
-
-                ProcessStartInfo psi = new ProcessStartInfo
-                {
-                    FileName = "powershell.exe",
-                    Arguments = $"-NoProfile -ExecutionPolicy Bypass -Command \"{psCommand}\"",
-                    UseShellExecute = false,
-                    RedirectStandardOutput = true,
-                    CreateNoWindow = true,
-                    StandardOutputEncoding = System.Text.Encoding.UTF8
-                };
-
-                using (Process proc = Process.Start(psi))
-                {
-                    string output = proc.StandardOutput.ReadToEnd();
-                    proc.WaitForExit();
-
-                    using (StringReader reader = new StringReader(output))
-                    {
-                        string line;
-                        while ((line = reader.ReadLine()) != null)
-                        {
-                            line = line.Trim();
-                            if (string.IsNullOrWhiteSpace(line) || !line.Contains("###"))
-                                continue;
-
-                            var parts = line.Split(new string[] { "###" }, StringSplitOptions.None);
-                            if (parts.Length == 2 && int.TryParse(parts[0].Trim(), out int index))
-                            {
-                                string rawName = parts[1].Trim();
-                                string friendlyName = FormatEditionName(rawName, Path.GetFileName(wimPath));
-
-                                list.Add(new WindowsEditionItem
-                                {
-                                    DisplayName = friendlyName,
-                                    FilePath = wimPath,
-                                    Index = index
-                                });
-                            }
-                        }
-                    }
-                }
-            }
-            catch (Exception ex)
-            {
-                MessageBox.Show($"Ошибка PowerShell: {ex.Message}");
-            }
-
-            return list;
-        }
-
-
-
-        private string FormatEditionName(string originalName, string fileName)
-        {
-            string name = originalName ?? string.Empty;
-            string file = fileName ?? string.Empty;
-
-            // 1. Автоматически определяем поколение ОС (Windows 10 или Windows 11)
-            string osPrefix = "Windows 11";
-            if (name.Contains("Windows 10", StringComparison.OrdinalIgnoreCase) ||
-                file.Contains("win10", StringComparison.OrdinalIgnoreCase) ||
-                file.Contains("10", StringComparison.OrdinalIgnoreCase))
-            {
-                osPrefix = "Windows 10";
-            }
-
-            // 2. Формируем понятные и удобные названия редакций
-            if (name.Contains("Pro", StringComparison.OrdinalIgnoreCase) &&
-                !name.Contains("Workstation", StringComparison.OrdinalIgnoreCase) &&
-                !name.Contains("Education", StringComparison.OrdinalIgnoreCase))
-            {
-                return $"{osPrefix} Профессиональная (Pro)";
-            }
-
-            if (name.Contains("Домашняя для одного языка", StringComparison.OrdinalIgnoreCase) ||
-                name.Contains("Single Language", StringComparison.OrdinalIgnoreCase))
-            {
-                return $"{osPrefix} Домашняя (Для одного языка)";
-            }
-
-            if (name.Contains("Домашняя", StringComparison.OrdinalIgnoreCase) ||
-                name.Contains("Home", StringComparison.OrdinalIgnoreCase))
-            {
-                return $"{osPrefix} Домашняя (Home)";
-            }
-
-            if (name.Contains("Корпоративная", StringComparison.OrdinalIgnoreCase) ||
-                name.Contains("Enterprise", StringComparison.OrdinalIgnoreCase))
-            {
-                return $"{osPrefix} Корпоративная (Enterprise)";
-            }
-
-            if (name.Contains("образовательных", StringComparison.OrdinalIgnoreCase) ||
-                name.Contains("Education", StringComparison.OrdinalIgnoreCase))
-            {
-                return $"{osPrefix} Для образовательных учреждений (Education)";
-            }
-
-            if (name.Contains("рабочих станций", StringComparison.OrdinalIgnoreCase) ||
-                name.Contains("Workstations", StringComparison.OrdinalIgnoreCase))
-            {
-                return $"{osPrefix} Pro для рабочих станций (Workstations)";
-            }
-
-            // Если редакция нестандартная, возвращаем оригинальное системное имя
-            return name;
-        }
-
-
-
-
-
-
+        // ───────────────────────── Софт (логика в DeploymentScriptGenerator) ─────────────────────────
 
         private void LoadAdditionalSoftware()
         {
@@ -326,18 +252,16 @@ namespace WinPEInstallerWPF
 
             if (Directory.Exists(softPath))
             {
-                var apps = Directory.GetFiles(softPath, "*.exe");
-                foreach (var app in apps)
+                foreach (var app in Directory.GetFiles(softPath, "*.exe"))
                 {
                     string fileName = Path.GetFileName(app);
 
-                    // Пропускаем установщики Office, так как под него вынесена отдельная галочка слева
+                    // Office ставится отдельной галочкой
                     if (fileName.Equals("Office.exe", StringComparison.OrdinalIgnoreCase) ||
                         fileName.Equals("AUTORUN.exe", StringComparison.OrdinalIgnoreCase))
                         continue;
 
-                    // Определяем категорию и красивое название
-                    var (category, friendlyName) = CategorizeSoftware(fileName);
+                    var (category, friendlyName) = DeploymentScriptGenerator.CategorizeSoftware(fileName);
 
                     softwareList.Add(new SoftwareItem
                     {
@@ -350,65 +274,172 @@ namespace WinPEInstallerWPF
                 }
             }
 
-            // Привязываем данные через группировку по категориям для WPF
             var view = (System.Windows.Data.ListCollectionView)System.Windows.Data.CollectionViewSource.GetDefaultView(softwareList);
             view.GroupDescriptions.Add(new System.Windows.Data.PropertyGroupDescription("Category"));
             ListSoft.ItemsSource = view;
         }
-        // Автоматический классификатор софта по типу
-        private (string Category, string FriendlyName) CategorizeSoftware(string file)
+
+        // ───────────────────────── Диски ─────────────────────────
+
+        private string RunDiskpart(string script, bool throwOnError = true)
         {
-            string f = file.ToLowerInvariant();
-
-            // 1. Системные компоненты
-            if (f.Contains("visualc") || f.Contains("vcredist")) return ("Системные компоненты", "Visual C++ 2005-2026");
-            if (f.Contains("directx")) return ("Системные компоненты", "DirectX Legacy (D3DX)");
-            if (f.Contains("7zip") || f.Contains("7z")) return ("Системные компоненты", "7-Zip Архиватор");
-
-            // 2. Интернет и документы (qBittorrent строго здесь!)
-            if (f.Contains("chrome")) return ("Интернет и документы", "Google Chrome");
-            if (f.Contains("acro") || f.Contains("adobe")) return ("Интернет и документы", "Adobe Acrobat Reader");
-            if (f.Contains("torrent") || f.Contains("qbittorrent") || f.Contains("qbit")) return ("Интернет и документы", "qBittorrent");
-            if (f.Contains("foxit")) return ("Интернет и документы", "Foxit PDF Reader");
-            if (f.Contains("telegram")) return ("Интернет и документы", "Telegram Desktop");
-            if (f.Contains("discord")) return ("Интернет и документы", "Discord");
-
-            // 3. Диагностика и стресс-тесты
-            if (f.Contains("aida")) return ("Диагностика и стресс-тесты", "AIDA64 Extreme");
-            if (f.Contains("crystaldisk")) return ("Диагностика и стресс-тесты", "CrystalDiskInfo (SSD)");
-            if (f.Contains("furmark")) return ("Диагностика и стресс-тесты", "FurMark (GPU Stress)");
-            if (f.Contains("hwinfo")) return ("Диагностика и стресс-тесты", "HWiNFO64");
-
-            // 4. Игры и мультимедиа
-            if (f.Contains("nvidia")) return ("Игры и мультимедиа", "NVIDIA App");
-            if (f.Contains("steam")) return ("Игры и мультимедиа", "Steam Client");
-            if (f.Contains("vlc")) return ("Игры и мультимедиа", "VLC Media Player");
-
-            return ("Другие приложения", Path.GetFileNameWithoutExtension(file));
+            string path = Path.Combine(Path.GetTempPath(), $"dp_{Guid.NewGuid():N}.txt");
+            File.WriteAllText(path, script, Encoding.ASCII);
+            try { return RunCommandCapture("diskpart.exe", $"/s \"{path}\"", throwOnError); }
+            finally { try { File.Delete(path); } catch { } }
         }
 
+        /// <summary>Номер физического диска, на котором лежит флешка (через Win32 API, без diskpart).</summary>
+        private int? GetBootDiskNumber()
+        {
+            string root = usbDrivePath.TrimEnd('\\');
+            if (root.Length < 2 || root[1] != ':') return null;
+            try { return PhysicalDisks.GetDiskNumberOfDrive(root[0]); }
+            catch (Exception ex) { Log($"GetBootDiskNumber: {ex.Message}"); return null; }
+        }
 
+        private static string FormatSize(long bytes)
+        {
+            double gb = bytes / 1073741824.0;
+            return gb >= 1024
+                ? $"{(gb / 1024).ToString("0.#", CultureInfo.InvariantCulture)} TB"
+                : $"{gb.ToString("0", CultureInfo.InvariantCulture)} GB";
+        }
 
+        private List<DiskItem> DetectDisks()
+        {
+            var result = new List<DiskItem>();
+            bootDiskNumber = GetBootDiskNumber();
 
+            int? systemDisk = null;
+            try
+            {
+                string sysRoot = Path.GetPathRoot(Environment.SystemDirectory) ?? "";
+                if (sysRoot.Length >= 2 && sysRoot[1] == ':')
+                    systemDisk = PhysicalDisks.GetDiskNumberOfDrive(sysRoot[0]);
+            }
+            catch { }
+
+            Log($"Диск флешки: {(bootDiskNumber?.ToString() ?? "не определён")}; диск текущей системы: {(systemDisk?.ToString() ?? "нет")}");
+
+            foreach (var d in PhysicalDisks.Enumerate())
+            {
+                Log($"Найден диск {d.Number}: {FormatSize(d.SizeBytes)}, '{d.Model}', шина '{d.BusType}'");
+                result.Add(new DiskItem
+                {
+                    Number = d.Number,
+                    Size = FormatSize(d.SizeBytes),
+                    Model = d.Model,
+                    BusType = d.BusType,
+                    IsBootMedia = bootDiskNumber == d.Number,
+                    IsRunningSystem = systemDisk == d.Number
+                });
+            }
+
+            if (result.Count == 0)
+                Log("Физические диски не найдены.");
+            return result;
+        }
+
+        private async Task LoadDisksAsync()
+        {
+            BtnStart.IsEnabled = false;
+            BtnRefreshDisks.IsEnabled = false;
+            ComboDisks.IsEnabled = false;
+            LblStatus.Text = "Поиск дисков...";
+            try
+            {
+                var disks = await Task.Run(DetectDisks);
+                ComboDisks.Items.Clear();
+                foreach (var d in disks) ComboDisks.Items.Add(d);
+
+                // Предвыбор: внутренний (не USB) диск, если он единственный кандидат.
+                var candidates = disks.Where(d => !d.IsBootMedia &&
+                                                  !d.BusType.Equals("USB", StringComparison.OrdinalIgnoreCase)).ToList();
+                ComboDisks.SelectedItem = candidates.Count == 1 ? candidates[0] : null;
+
+                LblStatus.Text = disks.Count == 0
+                    ? "Диски не найдены (см. лог: " + logPath + ")"
+                    : "Выберите образ и диск для установки";
+            }
+            catch (Exception ex)
+            {
+                Log($"LoadDisksAsync: {ex}");
+                LblStatus.Text = "Ошибка поиска дисков: " + ex.Message;
+            }
+            finally
+            {
+                BtnStart.IsEnabled = !string.IsNullOrEmpty(usbDrivePath);
+                BtnRefreshDisks.IsEnabled = true;
+                ComboDisks.IsEnabled = true;
+            }
+        }
+
+        private async void BtnRefreshDisks_Click(object sender, RoutedEventArgs e) => await LoadDisksAsync();
+
+        private void ComboDisks_SelectionChanged(object sender, System.Windows.Controls.SelectionChangedEventArgs e)
+        {
+            if (ComboDisks.SelectedItem is DiskItem d && d.IsBootMedia)
+            {
+                MessageBox.Show("Это диск, с которого запущен установщик (ваша флешка). Выберите другой диск.",
+                    "Недопустимый выбор", MessageBoxButton.OK, MessageBoxImage.Stop);
+                ComboDisks.SelectedItem = null;
+            }
+        }
+
+        // ───────────────────────── Запуск установки ─────────────────────────
 
         private async void BtnStart_Click(object sender, RoutedEventArgs e)
         {
+            // Защита: разметка и развёртывание разрешены только внутри WinPE
+            if (!IsWinPE)
+            {
+                MessageBox.Show(
+                    "Установка отключена: программа запущена не в WinPE.\n" +
+                    "Интерфейс и список дисков можно проверять, но разметка и развёртывание заблокированы,\n" +
+                    "чтобы не стереть диски рабочего компьютера.\n\n" +
+                    "Для проверки установки используйте виртуальную машину.",
+                    "Защита", MessageBoxButton.OK, MessageBoxImage.Stop);
+                return;
+            }
 
-            if (ComboImages.SelectedItem == null)
+            if (string.IsNullOrEmpty(usbDrivePath))
+            {
+                MessageBox.Show("Установочная флешка не найдена.");
+                return;
+            }
+            if (ComboImages.SelectedItem is not WindowsEditionItem edition)
             {
                 MessageBox.Show("Укажите требуемый образ Windows!");
                 return;
             }
+            if (ComboDisks.SelectedItem is not DiskItem disk)
+            {
+                MessageBox.Show("Выберите диск, на который будет установлена система!");
+                return;
+            }
+            if (disk.IsBootMedia)
+            {
+                MessageBox.Show("Нельзя устанавливать систему на загрузочную флешку.");
+                return;
+            }
 
-            var selectedEdition = (WindowsEditionItem)ComboImages.SelectedItem;
+            string warn = "";
+            if (!bootDiskNumber.HasValue)
+                warn += "\n\n⚠ Не удалось определить, на каком диске находится флешка. Проверьте выбор вручную!";
+            if (disk.BusType.Equals("USB", StringComparison.OrdinalIgnoreCase))
+                warn += "\n\n⚠ Выбран USB-накопитель.";
+
+            var confirm = MessageBox.Show(
+                $"ВСЕ ДАННЫЕ на диске будут безвозвратно удалены:\n\n{disk}{warn}\n\nПродолжить?",
+                "Подтверждение", MessageBoxButton.YesNo, MessageBoxImage.Warning, MessageBoxResult.No);
+            if (confirm != MessageBoxResult.Yes) return;
 
             var selectedApps = new List<string>();
             if (ListSoft.ItemsSource != null)
             {
                 foreach (SoftwareItem item in ListSoft.ItemsSource)
-                {
                     if (item.IsSelected) selectedApps.Add(item.Name);
-                }
             }
 
             bool installOffice = ChkInstallOffice.IsChecked == true;
@@ -417,257 +448,285 @@ namespace WinPEInstallerWPF
             bool disableTelemetry = ChkDisableTelemetry.IsChecked == true;
             bool disableEdge = ChkDisableEdgeStartup.IsChecked == true;
 
-            await Task.Run(() => ExecuteDeployment(
-                selectedEdition.FilePath,
-                selectedEdition.Index,
-                selectedApps,
-                installOffice,
-                disableDefender,
-                removeCopilot,
-                disableTelemetry,
-                disableEdge
-            ));
-
-        }
-
-
-
-
-
-
-        private void ExecuteDeployment(
-        string imagePath,
-        int imageIndex,
-        List<string> apps,
-        bool installOffice,
-        bool disableDefender,
-        bool removeCopilot,
-        bool disableTelemetry,
-        bool disableEdge)
-        {
-            // 1. Форматирование диска 0
-            UpdateStatus("Конфигурация целевого накопителя (Diskpart)...");
-            string diskpartScript = Path.Combine(Path.GetTempPath(), "dp.txt");
-            File.WriteAllText(diskpartScript, "select disk 0\nclean\nconvert gpt\ncreate partition efi size=100\nformat quick fs=fat32 label=\"System\"\nassign letter=S\ncreate partition primary\nformat quick fs=ntfs label=\"Windows\"\nassign letter=W\nexit");
-            RunCommand("diskpart.exe", $"/s \"{diskpartScript}\"");
-
-            // 2. Развертывание ОС через DISM
-            UpdateStatus($"Развертывание редакции (Индекс {imageIndex})... Это займет 5-8 минут.");
-            RunCommand("dism.exe", $"/Apply-Image /ImageFile:\"{imagePath}\" /Index:{imageIndex} /ApplyDir:W:\\");
-
-            // 3. Создание системного загрузчика UEFI
-            UpdateStatus("Создание системного загрузчика BCD...");
-            RunCommand("W:\\Windows\\System32\\bcdboot.exe", "W:\\Windows /s S: /f UEFI");
-
-            // 4. Применение твиков реестра в неактивную систему
-            UpdateStatus("Применение твиков реестра и оптимизаций...");
-            ApplyOfflineRegistryTweaks(disableDefender, removeCopilot, disableTelemetry, disableEdge);
-
-            // 5. Запись SetupComplete.cmd на системный диск W:\
-            UpdateStatus("Запись конфигурации SetupComplete.cmd...");
-            string cmdPath = @"W:\Windows\Setup\Scripts\SetupComplete.cmd";
-            Directory.CreateDirectory(Path.GetDirectoryName(cmdPath));
-
-            using (StreamWriter sw = File.CreateText(cmdPath))
-            {
-                sw.WriteLine("@echo off");
-                sw.WriteLine("chcp 65001 > nul");
-
-                // Автопоиск буквы флешки
-                sw.WriteLine("set USB_DRIVE=");
-                sw.WriteLine("for %%D in (C D E F G H I J K L M N O P Q R S T U V W X Y Z) do (");
-                sw.WriteLine("    if exist \"%%D:\\Soft\" set USB_DRIVE=%%D:");
-                sw.WriteLine(")");
-
-                if (installOffice)
-                {
-                    sw.WriteLine(":: Установка Microsoft Office LTSC (KpoJIuK)");
-                    sw.WriteLine("if exist \"%USB_DRIVE%\\Soft\\Office\\AUTORUN.exe\" (");
-                    sw.WriteLine("    echo [%date% %time%] Тихая установка Office LTSC... >> C:\\Windows\\Temp\\install.log");
-                    // Запуск прямо с флешки без лишнего копирования 3 ГБ во временную папку
-                    sw.WriteLine("    start \"\" /wait \"%USB_DRIVE%\\Soft\\Office\\AUTORUN.exe\" /S /PRO /ACT /RU");
-                    sw.WriteLine("    echo [%date% %time%] Office установлен [Код: %errorlevel%] >> C:\\Windows\\Temp\\install.log");
-                    sw.WriteLine(")");
-                }
-
-
-                // 2. Удаление Copilot (если выбрано)
-                if (removeCopilot)
-                {
-                    sw.WriteLine("powershell -Command \"Get-AppxPackage -AllUsers *Copilot* | Remove-AppxPackage -AllUsers\" > nul 2>&1");
-                }
-
-                // 3. Установка остального выбранного софта
-                foreach (var appName in apps)
-                {
-                    // Пропускаем Office, если он обрабатывается отдельно
-                    if (appName.Equals("Office.exe", StringComparison.OrdinalIgnoreCase)) continue;
-
-                    string dest = $@"C:\Windows\Temp\{appName}";
-                    sw.WriteLine($"copy /y \"%USB_DRIVE%\\Soft\\{appName}\" \"{dest}\" > nul 2>&1");
-
-                    // Обработка распаковки DirectX
-                    if (appName.Contains("DirectX", StringComparison.OrdinalIgnoreCase))
-                    {
-                        sw.WriteLine("mkdir C:\\Windows\\Temp\\DX_Extract > nul 2>&1");
-                        sw.WriteLine($"start \"\" /wait \"{dest}\" /Q /T:C:\\Windows\\Temp\\DX_Extract");
-                        sw.WriteLine("start \"\" /wait \"C:\\Windows\\Temp\\DX_Extract\\DXSETUP.exe\" /silent");
-                        sw.WriteLine("rmdir /s /q C:\\Windows\\Temp\\DX_Extract > nul 2>&1");
-                        continue;
-                    }
-
-                    // Подбор ключей тихой установки под конкретные приложения
-                    string args = "/S"; // Базовый ключ (для 7-Zip, Steam, Notepad++)
-
-                    // 1. Браузер и системные библиотеки
-                    if (appName.Contains("Chrome", StringComparison.OrdinalIgnoreCase))
-                        args = "/silent /install";
-                    else if (appName.Contains("VisualC", StringComparison.OrdinalIgnoreCase) || appName.Contains("vcredist", StringComparison.OrdinalIgnoreCase))
-                        args = "/ai /gm2";
-                    else if (appName.Contains("vlc", StringComparison.OrdinalIgnoreCase))
-                        args = "/L=1049 /S";
-                    else if (appName.Contains("NVIDIA", StringComparison.OrdinalIgnoreCase))
-                        args = "-s";
-
-                    // 2. Мессенджеры и голосовая связь
-                    else if (appName.Contains("Telegram", StringComparison.OrdinalIgnoreCase))
-                        args = "/VERYSILENT /NORESTART /SP-";
-                    else if (appName.Contains("Discord", StringComparison.OrdinalIgnoreCase))
-                        args = "/s";
-
-                    // 3. Документы (Adobe Acrobat Reader / Foxit Reader)
-                    else if (appName.Contains("Acrobat", StringComparison.OrdinalIgnoreCase) || appName.Contains("Adobe", StringComparison.OrdinalIgnoreCase))
-                        args = "/sAll /rs /msi EULA_ACCEPT=YES";
-                    else if (appName.Contains("Foxit", StringComparison.OrdinalIgnoreCase))
-                        args = "/VERYSILENT";
-
-                    // 4. Диагностика железа и стресс-тесты
-                    else if (appName.Contains("AIDA", StringComparison.OrdinalIgnoreCase))
-                        args = "/SILENT";
-                    else if (appName.Contains("FurMark", StringComparison.OrdinalIgnoreCase))
-                        args = "/VERYSILENT";
-                    else if (appName.Contains("CrystalDisk", StringComparison.OrdinalIgnoreCase))
-                        args = "/VERYSILENT";
-                    else if (appName.Contains("HWiNFO", StringComparison.OrdinalIgnoreCase))
-                        args = "/VERYSILENT";
-
-                    // 5. Удаленный доступ и сеть
-                    else if (appName.Contains("AnyDesk", StringComparison.OrdinalIgnoreCase))
-                        args = "--install \"C:\\Program Files (x86)\\AnyDesk\" --silent";
-                    else if (appName.Contains("3DP", StringComparison.OrdinalIgnoreCase))
-                        args = "/s";
-
-                    // Запуск установщика в фоне
-                    sw.WriteLine($"start \"\" /wait \"{dest}\" {args}");
-                }
-
-            }
-
-
-            UpdateStatus("Развертывание завершено! Перезагрузка ПК через 10 секунд...");
-            System.Threading.Thread.Sleep(10000);
-            RunCommand("wpeutil.exe", "reboot");
-        }
-
-
-        // Метод монтирования и правки реестра развернутой Windows W:\
-        private void ApplyOfflineRegistryTweaks(bool disableDefender, bool removeCopilot, bool disableTelemetry, bool disableEdge)
-        {
+            SetUiBusy(true);
             try
             {
-                // Подключаем куст реестра HKLM\SOFTWARE распакованной системы
-                RunCommand("reg.exe", @"load HKLM\OFFLINE_SOFT W:\Windows\System32\config\SOFTWARE");
+                await Task.Run(() => ExecuteDeployment(
+                    edition.FilePath, edition.Index, disk.Number, selectedApps,
+                    installOffice, disableDefender, removeCopilot, disableTelemetry, disableEdge));
+            }
+            catch (Exception ex)
+            {
+                Log($"ОШИБКА: {ex}");
+                FlushLogToUsb();
+                LblStatus.Text = "Ошибка: " + ex.Message;
+                MessageBox.Show($"{ex.Message}\n\nЛог: {logPath}\n(копия — на флешке в папке logs, если она доступна на запись)",
+                    "Сбой установки", MessageBoxButton.OK, MessageBoxImage.Error);
+                SetUiBusy(false);
+            }
+        }
+
+        private void SetUiBusy(bool busy)
+        {
+            BtnStart.IsEnabled = !busy;
+            BtnRefreshDisks.IsEnabled = !busy;
+            ComboDisks.IsEnabled = !busy;
+            ComboImages.IsEnabled = !busy;
+            ProgressInstall.IsIndeterminate = busy;
+            if (!busy) ProgressInstall.Value = 0;
+        }
+
+        // Подбор двух свободных букв для EFI и Windows (S/W могут быть заняты флешкой)
+        private static (string efi, string win) PickFreeLetters()
+        {
+            var used = DriveInfo.GetDrives().Select(d => char.ToUpperInvariant(d.Name[0])).ToHashSet();
+            var free = "SWTUVYZRQP".Where(c => !used.Contains(c)).ToList();
+            if (free.Count < 2) throw new InvalidOperationException("Нет свободных букв дисков для разделов.");
+            return (free[0].ToString(), free[1].ToString());
+        }
+
+        private void ExecuteDeployment(
+            string imagePath, int imageIndex, int targetDisk, List<string> apps,
+            bool installOffice, bool disableDefender, bool removeCopilot,
+            bool disableTelemetry, bool disableEdge)
+        {
+            Log($"Старт: образ={imagePath}, индекс={imageIndex}, диск={targetDisk}");
+
+            // Повторная проверка перед стиранием — на случай, если нумерация дисков изменилась
+            int? bootNow = GetBootDiskNumber();
+            if (bootNow == targetDisk)
+                throw new InvalidOperationException($"Диск {targetDisk} — это загрузочная флешка. Установка остановлена.");
+
+            if (!File.Exists(imagePath))
+                throw new FileNotFoundException("Файл образа не найден", imagePath);
+
+            var (efi, win) = PickFreeLetters();
+            Log($"Буквы: EFI={efi}:, Windows={win}:");
+
+            // 1. Разметка диска
+            UpdateStatus($"Разметка диска {targetDisk} (diskpart)...", null);
+            RunDiskpart(
+                $"select disk {targetDisk}\n" +
+                "online disk noerr\n" +
+                "attributes disk clear readonly noerr\n" +
+                "clean\n" +
+                "convert gpt\n" +
+                "create partition efi size=260\n" +
+                "format quick fs=fat32 label=System\n" +
+                $"assign letter={efi}\n" +
+                "create partition msr size=16\n" +
+                "create partition primary\n" +
+                "format quick fs=ntfs label=Windows\n" +
+                $"assign letter={win}\n" +
+                "exit");
+
+            if (!Directory.Exists($@"{efi}:\") || !Directory.Exists($@"{win}:\"))
+                throw new InvalidOperationException("После разметки не появились разделы EFI/Windows.");
+
+            // 2. Развёртывание образа с прогрессом
+            UpdateStatus($"Развёртывание редакции (индекс {imageIndex})...", 0);
+            RunDismWithProgress($"/Apply-Image /ImageFile:\"{imagePath}\" /Index:{imageIndex} /ApplyDir:{win}:\\");
+
+            if (!File.Exists($@"{win}:\Windows\System32\config\SOFTWARE"))
+                throw new InvalidOperationException("DISM завершился, но система не развёрнута (нет куста SOFTWARE).");
+
+            // 3. Загрузчик UEFI
+            UpdateStatus("Создание загрузчика (bcdboot)...", null);
+            RunCommandCapture($@"{win}:\Windows\System32\bcdboot.exe", $@"{win}:\Windows /s {efi}: /f UEFI");
+            if (!File.Exists($@"{efi}:\EFI\Microsoft\Boot\bootmgfw.efi"))
+                throw new InvalidOperationException("bcdboot не создал EFI-загрузчик.");
+
+            // 4. Офлайн-твики реестра (сбой не фатален — система уже установлена)
+            UpdateStatus("Применение твиков реестра...", null);
+            bool tweaksOk = ApplyOfflineRegistryTweaks(win, disableDefender, removeCopilot, disableTelemetry, disableEdge);
+
+            // 5. SetupComplete.cmd (логика — в DeploymentScriptGenerator, её покрывают unit-тесты)
+            UpdateStatus("Запись SetupComplete.cmd...", null);
+            string cmdPath = $@"{win}:\Windows\Setup\Scripts\SetupComplete.cmd";
+            Directory.CreateDirectory(Path.GetDirectoryName(cmdPath)!);
+            File.WriteAllText(cmdPath,
+                DeploymentScriptGenerator.BuildSetupCompleteScript(apps, installOffice, removeCopilot),
+                new UTF8Encoding(false));
+            Log($"SetupComplete.cmd записан ({apps.Count} приложений)");
+
+            FlushLogToUsb();
+
+            UpdateStatus(tweaksOk
+                ? "Готово! Перезагрузка через 10 секунд..."
+                : "Готово, но твики реестра применились не полностью (см. лог). Перезагрузка через 10 секунд...", 100);
+            System.Threading.Thread.Sleep(10000);
+            RunCommandCapture("wpeutil.exe", "reboot", false);
+        }
+
+        private bool ApplyOfflineRegistryTweaks(string win, bool disableDefender, bool removeCopilot,
+                                                bool disableTelemetry, bool disableEdge)
+        {
+            bool loaded = false;
+            try
+            {
+                RunCommandCapture("reg.exe", $@"load HKLM\OFFLINE_SOFT {win}:\Windows\System32\config\SOFTWARE");
+                loaded = true;
 
                 if (disableDefender)
                 {
-                    RunCommand("reg.exe", @"add ""HKLM\OFFLINE_SOFT\Policies\Microsoft\Windows Defender"" /v DisableAntiSpyware /t REG_DWORD /d 1 /f");
-                    RunCommand("reg.exe", @"add ""HKLM\OFFLINE_SOFT\Policies\Microsoft\Windows Defender\Real-Time Protection"" /v DisableRealtimeMonitoring /t REG_DWORD /d 1 /f");
-                    RunCommand("reg.exe", @"add ""HKLM\OFFLINE_SOFT\Policies\Microsoft\Windows Defender\Real-Time Protection"" /v DisableBehaviorMonitoring /t REG_DWORD /d 1 /f");
+                    Reg(@"HKLM\OFFLINE_SOFT\Policies\Microsoft\Windows Defender", "DisableAntiSpyware", 1);
+                    Reg(@"HKLM\OFFLINE_SOFT\Policies\Microsoft\Windows Defender\Real-Time Protection", "DisableRealtimeMonitoring", 1);
+                    Reg(@"HKLM\OFFLINE_SOFT\Policies\Microsoft\Windows Defender\Real-Time Protection", "DisableBehaviorMonitoring", 1);
                 }
-
                 if (removeCopilot)
                 {
-                    RunCommand("reg.exe", @"add HKLM\OFFLINE_SOFT\Policies\Microsoft\Windows\WindowsCopilot /v TurnOffWindowsCopilot /t REG_DWORD /d 1 /f");
-                    RunCommand("reg.exe", @"add HKLM\OFFLINE_SOFT\Microsoft\Windows\CurrentVersion\Explorer\Advanced /v ShowCopilotButton /t REG_DWORD /d 0 /f");
+                    Reg(@"HKLM\OFFLINE_SOFT\Policies\Microsoft\Windows\WindowsCopilot", "TurnOffWindowsCopilot", 1);
+                    Reg(@"HKLM\OFFLINE_SOFT\Microsoft\Windows\CurrentVersion\Explorer\Advanced", "ShowCopilotButton", 0);
                 }
-
                 if (disableTelemetry)
                 {
-                    RunCommand("reg.exe", @"add HKLM\OFFLINE_SOFT\Policies\Microsoft\Windows\DataCollection /v AllowTelemetry /t REG_DWORD /d 0 /f");
-                    RunCommand("reg.exe", @"add HKLM\OFFLINE_SOFT\Policies\Microsoft\Windows\DataCollection /v MaxTelemetryAllowed /t REG_DWORD /d 0 /f");
+                    Reg(@"HKLM\OFFLINE_SOFT\Policies\Microsoft\Windows\DataCollection", "AllowTelemetry", 0);
+                    Reg(@"HKLM\OFFLINE_SOFT\Policies\Microsoft\Windows\DataCollection", "MaxTelemetryAllowed", 0);
                 }
-
                 if (disableEdge)
                 {
-                    RunCommand("reg.exe", @"add HKLM\OFFLINE_SOFT\Policies\Microsoft\Edge /v StartupBoostEnabled /t REG_DWORD /d 0 /f");
-                    RunCommand("reg.exe", @"add HKLM\OFFLINE_SOFT\Policies\Microsoft\Edge /v BackgroundModeEnabled /t REG_DWORD /d 0 /f");
+                    Reg(@"HKLM\OFFLINE_SOFT\Policies\Microsoft\Edge", "StartupBoostEnabled", 0);
+                    Reg(@"HKLM\OFFLINE_SOFT\Policies\Microsoft\Edge", "BackgroundModeEnabled", 0);
                 }
-
-                // Обязательно выгружаем и сохраняем куст реестра
-                RunCommand("reg.exe", @"unload HKLM\OFFLINE_SOFT");
+                return true;
             }
-            catch
+            catch (Exception ex)
             {
-                // Игнорируем или логируем ошибки доступа к реестру
+                Log($"WARNING: твики реестра: {ex.Message}");
+                return false;
+            }
+            finally
+            {
+                if (loaded)
+                {
+                    try
+                    {
+                        GC.Collect();
+                        GC.WaitForPendingFinalizers();
+                        RunCommandCapture("reg.exe", @"unload HKLM\OFFLINE_SOFT");
+                    }
+                    catch (Exception ex) { Log($"WARNING: reg unload: {ex.Message}"); }
+                }
             }
         }
 
+        private void Reg(string key, string name, int value) =>
+            RunCommandCapture("reg.exe", $"add \"{key}\" /v {name} /t REG_DWORD /d {value} /f");
 
-        
+        // ───────────────────────── Запуск процессов ─────────────────────────
 
-        private void RunCommand(string filename, string arguments)
+        private static string Tail(string s) => s.Length <= 300 ? s.Trim() : "…" + s[^300..].Trim();
+
+        private string RunCommandCapture(string file, string args, bool throwOnError = true)
         {
-            ProcessStartInfo psi = new ProcessStartInfo
+            Log($">>> {file} {args}");
+            var psi = new ProcessStartInfo(file, args)
             {
-                FileName = filename,
-                Arguments = arguments,
                 UseShellExecute = false,
-                CreateNoWindow = true
+                CreateNoWindow = true,
+                RedirectStandardOutput = true,
+                RedirectStandardError = true,
+                StandardOutputEncoding = OemEncoding,
+                StandardErrorEncoding = OemEncoding
             };
-            using (Process proc = Process.Start(psi))
-            {
-                proc?.WaitForExit();
-            }
+            using var p = Process.Start(psi) ?? throw new InvalidOperationException($"Не удалось запустить {file}");
+            var errTask = p.StandardError.ReadToEndAsync();
+            string output = p.StandardOutput.ReadToEnd();
+            p.WaitForExit();
+            string err = errTask.Result;
+
+            if (!string.IsNullOrWhiteSpace(output)) Log(output.Trim());
+            if (!string.IsNullOrWhiteSpace(err)) Log("[stderr] " + err.Trim());
+            Log($"[exit {p.ExitCode}]");
+
+            if (throwOnError && p.ExitCode != 0)
+                throw new InvalidOperationException(
+                    $"{Path.GetFileName(file)} завершился с кодом {p.ExitCode}. {Tail(output + err)}");
+            return output;
         }
 
-        private void UpdateStatus(string message)
+        // DISM пишет прогресс как "[====   10.0%   ]" с символом \r — читаем посимвольно
+        private void RunDismWithProgress(string args)
         {
-            // Безопасное обновление элементов UI из фонового потока Task
+            Log($">>> dism.exe {args}");
+            var psi = new ProcessStartInfo("dism.exe", args)
+            {
+                UseShellExecute = false,
+                CreateNoWindow = true,
+                RedirectStandardOutput = true,
+                RedirectStandardError = true,
+                StandardOutputEncoding = OemEncoding,
+                StandardErrorEncoding = OemEncoding
+            };
+            using var p = Process.Start(psi) ?? throw new InvalidOperationException("Не удалось запустить dism.exe");
+            var errTask = p.StandardError.ReadToEndAsync();
+            var sb = new StringBuilder();
+            var line = new StringBuilder();
+            int ch;
+
+            while ((ch = p.StandardOutput.Read()) != -1)
+            {
+                char c = (char)ch;
+                if (c != '\r' && c != '\n') { line.Append(c); continue; }
+                if (line.Length == 0) continue;
+
+                string s = line.ToString();
+                line.Clear();
+
+                var m = Regex.Match(s, @"(\d{1,3}(?:[.,]\d)?)%");
+                if (m.Success && double.TryParse(m.Groups[1].Value.Replace(',', '.'),
+                        NumberStyles.Float, CultureInfo.InvariantCulture, out double pct))
+                {
+                    UpdateStatus($"Развёртывание образа... {pct:0}%", pct);
+                }
+                if (!s.TrimStart().StartsWith("[")) sb.AppendLine(s); // строки прогресса в лог не пишем
+            }
+            p.WaitForExit();
+            string err = errTask.Result;
+
+            Log(sb.ToString().Trim());
+            if (!string.IsNullOrWhiteSpace(err)) Log("[stderr] " + err.Trim());
+            Log($"[exit {p.ExitCode}]");
+
+            if (p.ExitCode != 0)
+                throw new InvalidOperationException($"DISM завершился с кодом {p.ExitCode}. {Tail(sb + err)}");
+        }
+
+        /// <param name="progress">null — неопределённый прогресс, число 0..100 — процент</param>
+        private void UpdateStatus(string message, double? progress)
+        {
             Dispatcher.Invoke(() =>
             {
                 LblStatus.Text = message;
+                if (progress.HasValue)
+                {
+                    ProgressInstall.IsIndeterminate = false;
+                    ProgressInstall.Value = progress.Value;
+                }
+                else
+                {
+                    ProgressInstall.IsIndeterminate = true;
+                }
             });
         }
 
-        // Флаг для отслеживания текущей темы (по умолчанию стоит темная)
-        private bool isDarkTheme = true;
+        // ───────────────────────── Тема ─────────────────────────
 
         private void BtnToggleTheme_Click(object sender, RoutedEventArgs e)
         {
-            // 1. Очищаем старые словари ресурсов из ресурсов приложения
             Application.Current.Resources.MergedDictionaries.Clear();
-
-            // 2. Определяем имя файла новой темы в зависимости от текущего состояния
             string themeFile = isDarkTheme ? "LightTheme.xaml" : "DarkTheme.xaml";
 
             try
             {
-                // 3. Создаем новый словарь ресурсов и подключаем его
-                var newTheme = new ResourceDictionary
-                {
-                    Source = new Uri(themeFile, UriKind.RelativeOrAbsolute)
-                };
-
+                var newTheme = new ResourceDictionary { Source = new Uri(themeFile, UriKind.RelativeOrAbsolute) };
                 Application.Current.Resources.MergedDictionaries.Add(newTheme);
-
-                // 4. Инвертируем флаг для следующего клика
                 isDarkTheme = !isDarkTheme;
             }
             catch (Exception ex)
             {
-                MessageBox.Show($"Не удалось загрузить файл темы '{themeFile}'. Убедитесь, что вы создали его в проекте.\nОшибка: {ex.Message}", "Ошибка тем оформления");
+                MessageBox.Show($"Не удалось загрузить файл темы '{themeFile}'.\nОшибка: {ex.Message}", "Ошибка тем оформления");
             }
         }
-
     }
 }

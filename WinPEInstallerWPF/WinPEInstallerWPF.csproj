@@ -13,4 +13,8 @@
     <Content Include="Windows_Phone_icon-icons.com_66782.ico" />
   </ItemGroup>
 
+  <ItemGroup>
+    <PackageReference Include="System.Management" Version="10.0.13" />
+  </ItemGroup>
+
 </Project>
